@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="th"><head><meta charset="utf-8"><title>BENCH 0/10</title>
+<!-- Computer-use benchmark page (tests/cubench.mjs copies it into the bot's home). Each finished task reveals its code
+     in the "รหัสยืนยัน" line; the bot must read it off the screen, so a correct code proves the task was really done. -->
+<style>
+  body { font: 18px/1.5 sans-serif; margin: 24px 40px; background: #f7f5ff; color: #222; }
+  h1 { font-size: 24px; margin: 0 0 8px; }
+  ol { padding-left: 24px; margin: 0; } li { margin: 6px 0; }
+  li.ok::marker { content: "✅ "; } li.ok { color: #1a7f37; }
+  .row { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; margin-top: 14px; }
+  input[type=text] { font-size: 18px; padding: 4px 8px; width: 220px; }
+  #dbl { width: 190px; height: 48px; background: #ffd66b; display: grid; place-items: center; border-radius: 10px; user-select: none; }
+  #tiny { width: 14px; height: 14px; font-size: 9px; padding: 0; line-height: 1; }
+  #start { font-size: 20px; padding: 8px 22px; background: #6d7cff; color: #fff; border: 0; border-radius: 10px; }
+  #spacer { height: 2600px; } #bottom { font-size: 20px; padding: 8px 22px; }
+  label { display: inline-flex; gap: 6px; align-items: center; }
+</style></head>
+<body>
+<h1>แบบทดสอบการใช้คอมพิวเตอร์ (ทำให้ครบทุกข้อ)</h1>
+<p>รหัสยืนยัน: <b id="codes">-</b></p>
+<ol id="tasks">
+  <li data-t="start">คลิกปุ่มสีม่วง "เริ่มทดสอบ"</li>
+  <li data-t="typeEn">พิมพ์ Rakazo Bot ในช่อง "ชื่ออังกฤษ"</li>
+  <li data-t="typeTh">พิมพ์ สวัสดีครับ ในช่อง "ข้อความไทย"</li>
+  <li data-t="check">ติ๊กช่อง "ยอมรับเงื่อนไข"</li>
+  <li data-t="select">เลือกจังหวัด เชียงใหม่ ในกล่อง "จังหวัด"</li>
+  <li data-t="dbl">ดับเบิลคลิกกล่องสีเหลือง</li>
+  <li data-t="drag">เลื่อนแถบ "ระดับ" ไปที่ 80 ขึ้นไป</li>
+  <li data-t="enter">พิมพ์ 123 ในช่อง "ค้นหา" แล้วกด Enter</li>
+  <li data-t="tiny">คลิกปุ่มเล็กจิ๋ว ✕ ข้างคำว่า "ปุ่มเล็ก"</li>
+  <li data-t="scroll">เลื่อนหน้าลงไปล่างสุดแล้วคลิกปุ่ม "ปุ่มล่างสุด"</li>
+</ol>
+<div class="row">
+  <button id="start">เริ่มทดสอบ</button>
+  <label>ชื่ออังกฤษ <input id="en" type="text"></label>
+  <label>ข้อความไทย <input id="th" type="text"></label>
+</div>
+<div class="row">
+  <label><input id="chk" type="checkbox"> ยอมรับเงื่อนไข</label>
+  <label>จังหวัด <select id="prov"><option value="">-- เลือก --</option><option>กรุงเทพ</option><option>ขอนแก่น</option><option>เชียงใหม่</option><option>ภูเก็ต</option></select></label>
+  <div id="dbl">ดับเบิลคลิกที่นี่</div>
+</div>
+<div class="row">
+  <label>ระดับ <input id="lvl" type="range" min="0" max="100" value="10"> <b id="lvlv">10</b></label>
+  <label>ค้นหา <input id="q" type="text"></label>
+  <span>ปุ่มเล็ก <button id="tiny" title="ปุ่มเล็ก">✕</button></span>
+</div>
+<div id="spacer"></div>
+<button id="bottom">ปุ่มล่างสุด</button>
+<script>
+  const t0 = performance.now(), done = {}, $ = id => document.getElementById(id);
+  const CODE = { start: "K3", typeEn: "M8", typeTh: "P2", check: "R5", select: "T9", dbl: "W4", drag: "X7", enter: "Z6", tiny: "Q1", scroll: "H5" };
+  function ok(t, e) {
+    if (done[t]) return;
+    done[t] = true;
+    document.querySelector(`li[data-t="${t}"]`).className = "ok";
+    const n = Object.keys(done).length;
+    document.title = `BENCH ${n}/10`;
+    $("codes").textContent = Object.keys(CODE).filter(k => done[k]).map(k => CODE[k]).join("-");
+  }
+  $("start").onclick = e => ok("start", e);
+  $("en").oninput = e => { if (e.target.value.trim() === "Rakazo Bot") ok("typeEn", e); };
+  $("th").oninput = e => { if (e.target.value.trim() === "สวัสดีครับ") ok("typeTh", e); };
+  $("chk").onchange = e => { if (e.target.checked) ok("check", e); };
+  $("prov").onchange = e => { if (e.target.value === "เชียงใหม่") ok("select", e); };
+  $("dbl").ondblclick = e => ok("dbl", e);
+  $("lvl").oninput = e => { $("lvlv").textContent = e.target.value; if (+e.target.value >= 80) ok("drag", e); };
+  $("q").onkeydown = e => { if (e.key === "Enter" && e.target.value.trim() === "123") ok("enter", e); };
+  $("tiny").onclick = e => ok("tiny", e);
+  $("bottom").onclick = e => ok("scroll", e);
+</script>
+</body></html>

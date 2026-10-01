@@ -1,0 +1,11 @@
+[Unit]
+Description=Block Docker containers from LAN/private addresses (Rakazo bots)
+After=docker.service
+PartOf=docker.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/rakazo-lan-block.sh
+ExecStop=/usr/local/sbin/rakazo-lan-block.sh --remove
+[Install]
+WantedBy=docker.service

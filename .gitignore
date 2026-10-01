@@ -1,0 +1,24 @@
+# ความลับ — ห้าม commit เด็ดขาด
+*.key
+*api-key*.txt
+.env
+.env.*
+!.env.example
+owner.json
+botadmin/demo-acct/token
+botadmin/demo-acct/data.json*
+
+# ผล build / dependency
+botadmin/bin/
+botadmin/obj/
+botadmin/dist/
+botoffice/node_modules/
+botoffice/.next/
+*.tsbuildinfo
+
+# ข้อมูลเครื่อง
+backups/
+logs/
+models/
+*.gguf
+*.log

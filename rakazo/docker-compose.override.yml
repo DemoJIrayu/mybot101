@@ -1,0 +1,42 @@
+# Local hotfixes for Rakazo v0.1.6 (undici 8 Agent driven by Node 22's built-in fetch ->
+# "invalid onRequestStart method"): web_search/web_fetch (upstream #808) and remote MCP (#875/#876).
+# pi-openai-compatible-provider.ts: llama-server ignores reasoning_effort -> send enable_thinking=false for
+# thinking level "off" and for follow-up computer/browser steps (planning step still thinks; ~2x faster clicks).
+# computer-tools.ts: Gemma 0..1000 click coordinates -> screen pixels (keep while bots run on Gemma).
+# supervisor: bot desktops use ./computer-th (base computer image + Thai fonts); rebuild it when the base tag changes.
+# Remove this file and ./hotfix after upgrading to a release that contains those fixes.
+x-hotfix: &hotfix
+  - ./hotfix/web-ssrf.ts:/app/packages/adapters/src/web-ssrf.ts:ro
+  - ./hotfix/keyless-http-web.ts:/app/packages/adapters/src/keyless-http-web.ts:ro
+  - ./hotfix/undici-fetch.ts:/app/packages/adapters/src/undici-fetch.ts:ro
+  - ./hotfix/remote-mcp.ts:/app/packages/adapters/src/remote-mcp.ts:ro
+  - ./hotfix/computer-tools.ts:/app/packages/adapters/src/computer-tools.ts:ro
+  - ./hotfix/pi-openai-compatible-provider.ts:/app/packages/adapters/src/pi-openai-compatible-provider.ts:ro
+services:
+  worker:
+    volumes: *hotfix
+    environment:
+      RAKAZO_COMPUTER_COORDINATE_GRID: "1000"
+      RAKAZO_GUI_THINKING_BUDGET: "1024"
+      SANDBOX_IDLE_MS: "2592000000" # 30 days: bot computers stay on (default 10 min idle -> suspend)
+  api:
+    volumes: *hotfix
+    environment:
+      RAKAZO_COMPUTER_COORDINATE_GRID: "1000"
+      RAKAZO_GUI_THINKING_BUDGET: "1024"
+      SANDBOX_IDLE_MS: "2592000000" # 30 days: bot computers stay on (default 10 min idle -> suspend)
+  supervisor:
+    environment:
+      RAKAZO_COMPUTER_IMAGE: botteam/computer:v0.1.6-th
+  # Demo accounting system (made-up data) for the bots, as an MCP server. It shares the worker network namespace
+  # because Rakazo only lets bots reach http://localhost (the worker loopback) or public https; binds 127.0.0.1:7788.
+  # Recreate it after the worker is recreated: rakazo.sh start does.
+  demo-accounting:
+    image: ghcr.io/elie222/rakazo/app:v0.1.6 # same image as the worker (already local); bump with RAKAZO_IMAGE_TAG
+    network_mode: "service:worker"
+    entrypoint: ["node", "/demo/server.mjs"]
+    user: "1000:1001"
+    volumes:
+      - ./demo-acct:/demo
+    restart: unless-stopped
+    depends_on: [worker]
