@@ -1,0 +1,50 @@
+# LiteLLM proxy config — agents ask for an alias, never a provider model name.
+# Swap models here without touching agent code.
+#
+# Aliases:
+#   lead          -> DeepSeek V4-Pro (planning, review; worth paying for)
+#   worker        -> Qwen3-Coder free on OpenRouter (Dev + QA)
+#   worker-paid   -> DeepSeek Flash (cheap), used automatically when the free model is
+#                    rate-limited or down
+#
+# Check model IDs before first run; providers rename models:
+#   DeepSeek:   https://api-docs.deepseek.com/quick_start/pricing
+#   OpenRouter: https://openrouter.ai/models?max_price=0
+# Model IDs checked 2026-10-01. DeepSeek charges half price off-peak; peak is
+# 08:00-11:00 and 13:00-17:00 Bangkok time on weekdays.
+
+model_list:
+  - model_name: lead
+    litellm_params:
+      model: deepseek/deepseek-v4-pro
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: worker
+    litellm_params:
+      model: openrouter/qwen/qwen3-coder:free
+      api_key: os.environ/OPENROUTER_API_KEY
+      rpm: 15                       # stay under OpenRouter's free-tier limit
+
+  - model_name: worker-paid
+    litellm_params:
+      model: deepseek/deepseek-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+router_settings:
+  fallbacks:
+    - worker: ["worker-paid"]
+  num_retries: 2
+  timeout: 120
+
+litellm_settings:
+  # Hard global cap in USD per month across all agents. The proxy refuses
+  # requests once it's hit. Also set a limit in the DeepSeek console.
+  max_budget: 10
+  budget_duration: 30d
+  drop_params: true
+  # Never log prompt/response bodies (they may contain code or secrets).
+  turn_off_message_logging: true
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

@@ -1,0 +1,14 @@
+# Copy this file to:  C:\Users\<your-user>\.wslconfig
+# Then run in PowerShell:  wsl --shutdown   (and reopen Ubuntu)
+#
+# Sized for a 16 GB laptop: leaves ~8 GB for Windows, VS Code and a browser.
+
+[wsl2]
+memory=8GB              # hard cap for everything inside WSL (Docker included)
+processors=8            # Ryzen 5 230 = 6 cores / 12 threads; keep 4 threads for Windows
+swap=4GB                # small safety net; if you see heavy swapping, stop sandboxes
+localhostForwarding=true
+
+[experimental]
+autoMemoryReclaim=gradual   # give unused RAM back to Windows over time
+sparseVhd=true              # let the WSL disk shrink when files are deleted

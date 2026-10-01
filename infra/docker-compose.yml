@@ -1,0 +1,104 @@
+# Agent team — base services (step 1).
+# Memory limits add up to ~3.5 GB, inside the 8 GB WSL cap.
+#
+#   docker compose up -d                          # LiteLLM + Postgres
+#   docker compose --profile sandbox up -d        # also start the 3 agent sandboxes
+#   docker compose --profile sandbox stop         # stop sandboxes when idle to free RAM
+#
+# Every port is bound to 127.0.0.1 only.
+
+name: agent-team
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: agent
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [agent-net]
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent"]
+      interval: 10s
+      retries: 5
+
+  # One OpenAI-compatible endpoint for all agents. Routes model aliases
+  # (lead / worker) to DeepSeek or the free Qwen3-Coder, enforces the
+  # monthly budget, and logs tokens per agent key.
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:?set LITELLM_MASTER_KEY in .env}
+      DATABASE_URL: postgresql://agent:${POSTGRES_PASSWORD}@postgres:5432/agent
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY in .env}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    ports:
+      - "127.0.0.1:4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [agent-net]
+    mem_limit: 1g
+
+  # Agent sandboxes: where agents run code, tests and Playwright.
+  # They never get your provider keys — only their own LiteLLM key.
+  sandbox-lead: &sandbox
+    profiles: ["sandbox"]
+    build: ./sandbox
+    image: agent-team/sandbox:latest
+    restart: "no"
+    environment:
+      OPENAI_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${LEAD_AGENT_KEY:-changeme}
+      AGENT_ROLE: lead
+    volumes:
+      - ws-lead:/workspace
+    networks: [agent-net]
+    mem_limit: 768m
+    cpus: 2
+    pids_limit: 512
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=256m"]
+
+  sandbox-dev:
+    <<: *sandbox
+    environment:
+      OPENAI_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${DEV_AGENT_KEY:-changeme}
+      AGENT_ROLE: dev
+    volumes:
+      - ws-dev:/workspace
+    mem_limit: 1536m          # builds Next.js / runs tests
+
+  sandbox-qa:
+    <<: *sandbox
+    environment:
+      OPENAI_BASE_URL: http://litellm:4000/v1
+      OPENAI_API_KEY: ${QA_AGENT_KEY:-changeme}
+      AGENT_ROLE: qa
+    volumes:
+      - ws-qa:/workspace
+    mem_limit: 1536m          # headless Chromium for Playwright
+    shm_size: 512m
+
+networks:
+  agent-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24   # infra/wsl/lan-block.sh relies on this
+
+volumes:
+  pgdata:
+  ws-lead:
+  ws-dev:
+  ws-qa:
