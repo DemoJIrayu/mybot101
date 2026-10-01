@@ -37,7 +37,9 @@
     body.innerHTML = `<div class="card" style="margin-bottom:16px"><div class="row" style="gap:10px;align-items:flex-start">${ceo ? av(ceo.id, ceo.name) : ""}
         <div style="flex:1;min-width:0"><b>มอบหมายงานผ่าน CEO</b><div class="muted" style="font-size:12.5px">CEO แตกงานให้ฝ่ายที่เกี่ยวข้องเอง (message_bot) รอผลจากทุกฝ่าย แล้วสรุปให้คุณ · เห็นการส่งงานสดที่ห้องควบคุม</div>
         <div class="row" style="gap:8px;margin-top:10px"><textarea class="input" id="tm-goal" rows="2" style="flex:1" placeholder="เช่น เตรียมโปรโมชั่นต้นเดือนหน้า: เช็คสต็อกสินค้าขายดี ลูกหนี้ค้าง และร่างโพสต์โปรโมชั่น"></textarea>
-        <button class="btn primary" id="tm-send" ${ceo ? "" : "disabled"}>${icon("send")}ให้ CEO แจกงาน</button></div></div></div></div>
+        <div class="col" style="gap:6px"><button class="btn primary" id="tm-send" ${ceo ? "" : "disabled"}>${icon("send")}ให้ CEO แจกงาน</button>
+          <div class="row" style="gap:6px"><button class="btn mic" id="tm-mic" title="พูดแผนงานยาวๆ ได้เลย ไม่ต้องเรียบเรียง">🎤</button>
+          <button class="btn" id="tm-plan" style="flex:1" title="ให้ผู้ช่วยแตกเป็นงานย่อย มอบให้ฝ่ายต่างๆ ก่อนอนุมัติ">🗂 แตกเป็นแผน</button></div></div></div></div></div></div>
       <div class="row" style="margin-bottom:10px;gap:8px"><b>การส่งงานระหว่างบอท</b><span class="chip">${hand.length} ครั้ง</span>${busy.size ? `<span class="chip warn">กำลังทำ ${busy.size}</span>` : ""}</div>
       ${hand.length ? `<div class="card" style="padding:6px 0">${hand.slice(0, 60).map((h, i) => { const [st, cls] = status(h), f = botOf(h.from), t = botOf(h.to);
         return `<div class="hand" data-to="${esc(h.to)}" style="animation-delay:${Math.min(i, 12) * 30}ms">
@@ -49,6 +51,19 @@
            <div class="muted">ลองมอบหมายงานผ่าน CEO ด้านบน หรือบอกบอทตัวไหนก็ได้ว่า "ส่งเรื่องนี้ให้ฝ่ายบัญชีช่วยดู"</div></div></div>`}`;
     body.querySelectorAll(".hand").forEach(el => el.onclick = () => go({ type: "bot", id: el.dataset.to }));
     const send = $("#tm-send", body), goalEl = $("#tm-goal", body);
+    const planBtn = $("#tm-plan", body), micBtn = $("#tm-mic", body);
+    const plan = async said => {
+      planBtn.disabled = true; planBtn.innerHTML = '<span class="spin"></span>กำลังแตกงาน…';
+      try { await App.assistant.planFrom(said); } catch (e) { toast(e.message, "bad"); }
+      planBtn.disabled = false; planBtn.textContent = "🗂 แตกเป็นแผน";
+    };
+    planBtn.onclick = () => plan(goalEl.value);
+    micBtn.onclick = async () => {
+      const heard = App.voice.listen(micBtn);
+      if (!heard) return;
+      try { const said = await heard; if (!said) return toast("ไม่ได้ยินเสียงพูด ลองใหม่อีกครั้ง", "warn"); goalEl.value = said; await plan(said); }
+      catch (e) { toast(e.message, "bad"); }
+    };
     if (send) send.onclick = async () => {
       const goal = goalEl.value.trim();
       if (!goal) return toast("พิมพ์งานที่ต้องการก่อน", "warn");
@@ -351,5 +366,5 @@
   at("skills", ["knowledge", "book", "ความรู้บริษัท", brain]);
   at("usage", ["rules", "shield", "กฎ", rules]);
   at("rules", ["backup", "download", "สำรอง", backup]);
-  App.company = { companyExport, auditCsv, parseBrain, brainText }; // tests
+  App.company = { companyExport, auditCsv, parseBrain, brainText, RULES, setRule };
 })();

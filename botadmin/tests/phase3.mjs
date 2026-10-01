@@ -43,9 +43,9 @@ try {
   check("Bot A/B are private computers", A.computerMode === "dedicated" && B.computerMode === "dedicated");
 
   // 1) Bot A: screenshot, uname, file
-  const a1 = await ask(A.id, "ทำ 3 อย่างบน Computer ของคุณ: (1) เปิด https://example.com ใน browser แล้วบอกหัวข้อหน้าเว็บ (2) รันคำสั่ง `uname -a` ใน terminal แล้วแปะผลลัพธ์ (3) สร้างไฟล์ ~/isolation-test.txt มีข้อความ bot-a-only แล้วรัน `cat ~/isolation-test.txt` ยืนยัน");
+  const a1 = await ask(A.id, "ทำ 3 อย่างบน Computer ของคุณ: (1) เปิด https://www.bcaccount.com ใน browser แล้วบอกหัวข้อหน้าเว็บ (2) รันคำสั่ง `uname -a` ใน terminal แล้วแปะผลลัพธ์ (3) สร้างไฟล์ ~/isolation-test.txt มีข้อความ bot-a-only แล้วรัน `cat ~/isolation-test.txt` ยืนยัน");
   console.log(`   Bot A ${(a1.ms / 1000).toFixed(1)}s: ${a1.reply.replace(/\s+/g, " ").slice(0, 200)}`);
-  check("Bot A opened example.com", /Example Domain/i.test(a1.reply));
+  check("Bot A opened www.bcaccount.com", /BC Account/i.test(a1.reply));
   check("Bot A ran uname -a", /Linux/.test(a1.reply));
   const boxA = wsl(`docker ps --filter label=rakazo.botId=${A.id} --format '{{.Names}}' | head -1`);
   const boxB0 = wsl(`docker ps -a --filter label=rakazo.botId=${B.id} --format '{{.Names}}' | head -1`);
@@ -67,12 +67,12 @@ try {
   const t0 = Date.now();
   const [ca, cb] = await Promise.all([
     ask(A.id, "รัน `date; nproc; free -m` ใน terminal แล้วแปะผลลัพธ์"),
-    ask(B.id, "เปิด https://example.com ใน browser แล้วบอกหัวข้อหน้าเว็บ"),
+    ask(B.id, "เปิด https://www.bcaccount.com ใน browser แล้วบอกหัวข้อหน้าเว็บ"),
   ]);
   sampling = false; await sampler;
   const snap = await c.evaluate(`App.call("snapshot")`);
   check("concurrent Bot A reply", /Mem|nproc|\d{2}:\d{2}/.test(ca.reply), `${(ca.ms / 1000).toFixed(1)}s`);
-  check("concurrent Bot B reply", /Example Domain/i.test(cb.reply), `${(cb.ms / 1000).toFixed(1)}s`);
+  check("concurrent Bot B reply", /BC Account/i.test(cb.reply), `${(cb.ms / 1000).toFixed(1)}s`);
   console.log(`   both done in ${((Date.now() - t0) / 1000).toFixed(1)}s; VRAM peak ${Math.max(...samples)} MiB of ${snap.gpu?.vramTotal ?? "?"}; RAM ${snap.ramUsedGb?.toFixed?.(1)} / ${snap.ramTotalGb?.toFixed?.(1)} GB`);
   const stats = wsl(`docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}' ${boxA} ${boxB}`);
   console.log("   " + stats.replace(/\n/g, "\n   "));

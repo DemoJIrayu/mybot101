@@ -42,7 +42,7 @@ try {
   // 1. single bot: streamed reply + tool steps
   const a = await createBot(`ทดสอบ-A-${stamp}`, "ตอบภาษาไทยสั้นๆ");
   const t0 = Date.now();
-  await send("ใช้ web_fetch อ่าน https://example.com แล้วบอกหัวข้อหน้าเว็บเป็นประโยคเดียว");
+  await send("ใช้ web_fetch อ่าน https://www.bcaccount.com แล้วบอกหัวข้อหน้าเว็บเป็นประโยคเดียว");
   check("my bubble appears", await c.waitFor(`document.querySelectorAll(".msg.me").length >= 1`, 3000));
   const typing = await c.waitFor(`!!document.querySelector(".msg.bot .typing, .steps")`, 30000);
   check("typing/steps indicator", typing, `${Date.now() - t0}ms`);

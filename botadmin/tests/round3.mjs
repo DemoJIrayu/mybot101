@@ -84,7 +84,7 @@ try {
   await activate("#msgs");
   const voices = await c.waitFor(`(() => { const v = speechSynthesis.getVoices().filter(v => v.lang === "th-TH").map(v => v.name); return v.length && v; })()`, 10000);
   check("a Thai voice is installed for read-aloud", voices, voices);
-  await c.evaluate(`App.voice.speak("**สวัสดีครับ** นี่คือ [ลิงก์](https://example.com) ทดสอบ")`);
+  await c.evaluate(`App.voice.speak("**สวัสดีครับ** นี่คือ [ลิงก์](https://www.bcaccount.com) ทดสอบ")`);
   check("read-aloud speaks, with markdown/links stripped", await c.waitFor(`speechSynthesis.speaking || speechSynthesis.pending`, 5000), await c.evaluate("App.voice.last"));
   await c.evaluate("App.voice.stop()");
   // the mic path minus the device: wav -> AudioContext -> MediaRecorder (webm/opus) -> host whisper

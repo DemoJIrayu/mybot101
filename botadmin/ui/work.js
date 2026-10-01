@@ -13,20 +13,29 @@
   const openChat = r => go(r.groupId ? { type: "group", id: r.groupId } : { type: "bot", id: r.botId });
 
   // ---------- waiting badge (sidebar) + a toast when a bot starts waiting for you ----------
-  let waiting = [], seen = null;
+  let waiting = [], seen = null, held = [], holdTimer = null;
   const listeners = new Set();
+  const notified = []; // tests
+  // several bots often start waiting within seconds of each other: one notification + one toast for the batch
+  function flush() {
+    holdTimer = null;
+    const batch = held.splice(0), cur = route() || {};
+    if (!batch.length) return;
+    const one = batch.length === 1 && batch[0];
+    const what = one ? `${one.botName} ${one.status === "waiting_takeover" ? "ขอให้ช่วยบนหน้าจอ" : "รอคำตอบจากคุณ"}`
+      : `${batch.length} เรื่องรอคุณ: ${[...new Set(batch.map(r => r.botName))].join(", ")}`;
+    notified.push({ at: Date.now(), count: batch.length });
+    // Windows notification; the host shows it only while the app is in the background or minimized
+    call("notify", { title: "BotTeam · มีบอทรอคุณ", body: what + (one && one.promptSnippet ? "\n" + one.promptSnippet.slice(0, 80) : ""),
+      route: one ? { type: one.groupId ? "group" : "bot", id: one.groupId || one.botId } : { type: "work", tab: "inbox" } }).catch(() => {});
+    if (!(one && cur.id === (one.groupId || one.botId)) && cur.type !== "work") toast(what + " · ดูที่ศูนย์งาน", "warn");
+  }
   async function poll() {
     if (!store.snap || !store.snap.rakazo.health.startsWith("พร้อม")) return;
     try {
       const rows = (await rk("runs/list", { filter: "active" })).runs.filter(r => PAUSED.test(r.status));
-      const cur = route() || {};
-      for (const r of rows) {
-        if (!seen || seen.has(r.runId)) continue;
-        const what = `${r.botName} ${r.status === "waiting_takeover" ? "ขอให้ช่วยบนหน้าจอ" : "รอคำตอบจากคุณ"}`;
-        // Windows notification; the host shows it only while the app is in the background or minimized
-        call("notify", { title: "BotTeam · มีบอทรอคุณ", body: what + (r.promptSnippet ? "\n" + r.promptSnippet.slice(0, 80) : ""), route: { type: r.groupId ? "group" : "bot", id: r.groupId || r.botId } }).catch(() => {});
-        if (!(cur.id === (r.groupId || r.botId)) && cur.type !== "work") toast(what + " · ดูที่ศูนย์งาน", "warn");
-      }
+      const fresh = seen ? rows.filter(r => !seen.has(r.runId)) : [];
+      if (fresh.length) { held.push(...fresh); clearTimeout(holdTimer); holdTimer = setTimeout(flush, held.length > 1 ? 4000 : 12000); }
       seen = new Set(rows.map(r => r.runId));
       const sig = r => r.map(x => x.runId).join();
       const changed = sig(rows) !== sig(waiting);
@@ -48,7 +57,7 @@
       const block = m && m.blocks.find(b => b.kind === "ask" || b.kind === "computer");
       return { r, m, block };
     }));
-    body.innerHTML = items.length ? `<div class="inbox">${items.map(({ r, m, block }, i) => {
+    body.innerHTML = items.length ? `<div class="inbox">${items.length > 1 ? '<div class="dg"></div>' : ""}${items.map(({ r, m, block }, i) => {
       const ask = block && block.kind === "ask", acts = ask ? block.actions || [] : [];
       const kind = !block ? "รอคุณ" : !ask ? "ขอให้ช่วยบนหน้าจอ" : block.approvalEffectId ? "ขออนุมัติ" : "ถามคุณ";
       const actions = !block ? ""
@@ -59,14 +68,15 @@
         <div class="row">${av(r.botId, r.botName)}<div style="min-width:0"><b>${esc(r.botName)}</b>${r.groupName ? `<span class="muted"> · ${esc(r.groupName)}</span>` : ""}
           <div class="muted" style="font-size:12px">${esc(kind)} · ${esc(relTime(r.updatedAt))}</div></div><span class="grow"></span>
           <button class="btn ghost sm" data-chat="${i}">${icon("chat")}เปิดแชท</button></div>
-        <div class="inbox-text">${App.chat.md(block ? block.text || "" : r.promptSnippet)}</div>
+        <div class="inbox-text">${App.chat.md(block ? App.chat.th(block.text || "") : r.promptSnippet)}</div>
         ${ask && block.detail ? `<pre class="inbox-detail">${esc(App.chat.th(block.detail))}</pre>` : ""}
         ${actions ? `<div class="row inbox-actions">${actions}</div>` : ""}</div>`;
     }).join("")}</div>`
       : `<div class="empty" style="min-height:40vh"><div><div class="float" style="font-size:44px">🎉</div><h2>ไม่มีงานรอคุณ</h2>
          <div class="muted">เมื่อบอทต้องการอนุมัติ ถามคำถาม หรือขอให้ช่วยบนหน้าจอ จะมาอยู่ที่นี่ และมีตัวเลขเตือนที่แถบซ้าย</div></div></div>`;
     const answer = async (i, text, btn) => {
-      const { r, m } = items[i];
+      const { r, m, block } = items[i];
+      if (text === "always" && !(await App.assistant.confirmAlways(block?.detail))) return;
       btn.closest(".card").querySelectorAll("button,input").forEach(x => x.disabled = true);
       try {
         await rk("threads/answer", { ...targetOf(r), runId: r.runId, messageId: m.id, answer: text });
@@ -74,6 +84,8 @@
         await poll(); refresh();
       } catch (e) { toast("ตอบไม่สำเร็จ: " + e.message, "bad"); btn.closest(".card").querySelectorAll("button,input").forEach(x => x.disabled = false); }
     };
+    const dg = $(".dg", body);
+    if (dg) App.assistant.digest(items, dg, $(".inbox", body), answer);
     body.querySelectorAll("[data-chat],[data-open]").forEach(b => b.onclick = () => openChat(items[b.dataset.chat ?? b.dataset.open].r));
     body.querySelectorAll("[data-answer]").forEach(b => b.onclick = () => answer(+b.dataset.i, b.dataset.answer, b));
     body.querySelectorAll("[data-reply]").forEach(b => {
@@ -391,13 +403,13 @@
       <div class="seg" id="w-tabs"><div class="thumb"></div>${TABS.map(([k, ic, t]) => `<button data-tab="${k}">${icon(ic)}${t}<span class="tab-n" data-n="${k}"></span></button>`).join("")}</div>
       <div id="w-body" style="margin-top:18px"><div class="card skeleton" style="height:140px"></div></div></div>`;
     const seg = $("#w-tabs", view), body = $("#w-body", view);
-    const moveThumb = () => { const on = $("button.on", seg), t = $(".thumb", seg); if (on) { t.style.left = on.offsetLeft + "px"; t.style.width = on.offsetWidth + "px"; } };
+    const moveThumb = () => { const on = $("button.on", seg), t = $(".thumb", seg); if (on) { t.style.left = on.offsetLeft + "px"; t.style.width = on.offsetWidth + "px"; on.scrollIntoView({ block: "nearest", inline: "nearest" }); } };
     const badge = () => { const n = $('[data-n="inbox"]', seg); n.textContent = waiting.length ? waiting.length : ""; moveThumb(); };
     // render off-screen, then swap in: no flicker, and background refreshes never clobber an answer being typed
     async function render(force) {
       const want = tab, fn = TABS.find(t => t[0] === tab)[3];
       if (!force && tab === "inbox" && sig === "inbox:" + waiting.map(w => w.runId).join()) return;
-      if (!force && !/^(inbox|activity|team)$/.test(tab)) return; // no background refresh while editing or reading
+      if (!force && !/^(inbox|activity|team|brief|triggers)$/.test(tab)) return; // no background refresh while editing or reading
       const tmp = document.createElement("div");
       try {
         const s = await fn(tmp, () => render(true));
@@ -423,11 +435,11 @@
     render(true);
     const onWaiting = () => { badge(); if (tab === "inbox") render(); };
     listeners.add(onWaiting);
-    const timer = setInterval(() => { if (tab === "activity" || tab === "team") render(); }, 5000);
+    const timer = setInterval(() => { if (/^(activity|team|brief|triggers)$/.test(tab)) render(); }, 5000);
     return () => { alive = false; listeners.delete(onWaiting); clearInterval(timer); };
   });
 
   document.addEventListener("app:start", () => { poll(); setInterval(poll, 5000); onSnapshot(() => { if (store.waiting === undefined) poll(); }); });
   // company.js adds its tabs (team, skills, knowledge, rules, backup) and reuses the helpers
-  App.work = { poll, preview, tabs: TABS, av, botOf, bots, fileIcon, kb };
+  App.work = { poll, inbox, notified, preview, tabs: TABS, av, botOf, bots, fileIcon, kb };
 })();

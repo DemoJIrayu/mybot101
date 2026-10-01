@@ -49,7 +49,7 @@
   function addServer(done) {
     const m = modal(`<h2>เพิ่ม MCP server</h2><div class="muted">ระบบตรวจ URL ก่อนเชื่อม (บล็อกที่อยู่ภายในเครือข่ายเพื่อความปลอดภัย)</div>
       <div class="field"><label>ชื่อ</label><input class="input" id="m-name" maxlength="120" placeholder="เช่น DeepWiki"></div>
-      <div class="field"><label>URL</label><input class="input mono" id="m-url" placeholder="https://example.com/mcp"></div>
+      <div class="field"><label>URL</label><input class="input mono" id="m-url" placeholder="https://www.bcaccount.com/mcp"></div>
       <div class="field"><label>Token (ถ้ามี)</label><input class="input" id="m-token" type="password" autocomplete="off" placeholder="ส่งเป็น Authorization: Bearer … เก็บแบบเข้ารหัสใน Rakazo"></div>
       <div class="field"><label>คำอธิบาย</label><input class="input" id="m-desc" maxlength="2000" placeholder="ใช้ทำอะไร (บอทเห็นข้อความนี้)"></div>
       <div class="actions"><button class="btn ghost" id="m-cancel">ยกเลิก</button><button class="btn primary" id="m-ok">${icon("plus")}เชื่อมต่อ</button></div>`);

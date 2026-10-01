@@ -5,6 +5,26 @@ import { hush, sfx, speak, thaiVoice, unlockAudio } from "./sound";
 
 const ago = (at: number) => { const s = Math.max(0, Math.round((Date.now() - at) / 1000)); return s < 60 ? `${s} วิ` : `${Math.round(s / 60)} นาที`; };
 
+// theme: system (follows Windows) -> light -> dark; layout.tsx applies the saved choice before the first paint
+const THEMES = [["system", "🖥", "ธีม: ระบบ"], ["light", "☀️", "ธีม: สว่าง"], ["dark", "🌙", "ธีม: มืด"]] as const;
+const applyTheme = (c: string) => {
+  document.documentElement.dataset.theme = c === "dark" || (c === "system" && matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+};
+function ThemeButton() {
+  const [choice, setChoice] = useState<string | null>(null); // null until the browser's saved choice is read (no SSR mismatch)
+  useEffect(() => setChoice(localStorage.getItem("office.theme") || "system"), []);
+  useEffect(() => {
+    if (!choice) return;
+    applyTheme(choice);
+    const mq = matchMedia("(prefers-color-scheme: dark)"), on = () => applyTheme(choice);
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, [choice]);
+  const i = Math.max(0, THEMES.findIndex(t => t[0] === choice)), [, em, label] = THEMES[i];
+  const next = () => { const c = THEMES[(i + 1) % THEMES.length][0]; localStorage.setItem("office.theme", c); setChoice(c); };
+  return <button className="theme-btn" onClick={next} title={`${label} — กดเพื่อสลับ (ระบบ = ตาม Windows)`} aria-label={label} data-theme-btn={choice ?? ""}>{em}</button>;
+}
+
 function Clock() {
   const [t, setT] = useState(() => new Date());
   useEffect(() => { const i = setInterval(() => setT(new Date()), 1000); return () => clearInterval(i); }, []);
@@ -76,6 +96,7 @@ export default function Hud() {
     <>
       <div className="brand card">
         <div className="title">🏢 ออฟฟิศบอท</div>
+        <ThemeButton />
         <div className="muted"><Clock /> · กรุงเทพฯ</div>
         <div className="stats">
           <span className="stat on">🟢 ทำงาน {working}</span>

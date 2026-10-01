@@ -25,6 +25,7 @@ try {
     dots: !!document.querySelector(".msg.bot .typing") })`);
   check("status says รออนุมัติ", /รออนุมัติ/.test(ui.status), ui.status);
   check("buttons in Thai", ui.buttons.length > 0 && ui.buttons.every(t => /[\u0E00-\u0E7F]/.test(t)), ui.buttons.join(" | "));
+  check("card text in Thai (no Rakazo 'Review before')", !/Review before/.test(await c.evaluate(`document.querySelector(".approval").textContent`)), await c.evaluate(`document.querySelector(".approval > div:nth-child(2)")?.textContent.slice(0, 60)`));
   check("no typing dots while waiting", !ui.dots);
   await c.screenshot("D:/tmp/approval.png");
   await c.evaluate(`[...document.querySelectorAll(".approval [data-answer]")].find(b => b.dataset.answer === "deny").click()`);

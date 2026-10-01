@@ -11,17 +11,44 @@
   const collapsed = new Set(JSON.parse(localStorage.getItem("bt.collapsed") || "[]"));
   // Thai text-to-speech with the Windows voice (Microsoft Pattara, offline); markdown/links stripped, long replies cut
   App.voice = {
-    speak(text) {
+    speak(text, botId, voice) {
       const s = window.speechSynthesis;
       const plain = String(text).replace(/```[\s\S]*?```/g, " ").replace(/https?:\/\/\S+/g, " ลิงก์ ").replace(/[*_#>`|~[\]()]/g, " ").replace(/\s+/g, " ").trim().slice(0, 800);
       if (!s || !plain) return;
       s.cancel();
       const u = new SpeechSynthesisUtterance(plain);
       u.lang = "th-TH"; u.voice = s.getVoices().find(v => v.lang === "th-TH") || null;
+      const v = voice || (botId && App.persona?.voiceOf(botId)); // persona studio: pitch / speed per bot
+      if (v) { u.pitch = v.pitch || 1; u.rate = v.rate || 1; }
       s.speak(u);
       App.voice.last = plain;
     },
     stop() { window.speechSynthesis?.cancel(); },
+    // 🎤 toggle on any button: 1st click records (max 60 s), 2nd click stops; resolves the local whisper transcript.
+    // The 2nd click returns null - the promise from the 1st click carries the text.
+    listen(btn, label = "🎤") {
+      if (btn._rec) { btn._rec.stop(); return null; }
+      return new Promise(async (resolve, reject) => {
+        let stream;
+        try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch (e) { return reject(new Error("เปิดไมค์ไม่ได้: " + e.message)); }
+        call("stt.warm").catch(() => {});
+        App.voice.stop();
+        const chunks = [], started = Date.now(), rec = btn._rec = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+        rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+        const tick = setInterval(() => { btn.textContent = "⏺ " + Math.round((Date.now() - started) / 1000) + "s"; if (Date.now() - started > 60000) rec.stop(); }, 250);
+        btn.classList.add("rec");
+        rec.onstop = async () => {
+          clearInterval(tick); stream.getTracks().forEach(t => t.stop()); btn._rec = null;
+          btn.classList.remove("rec"); btn.textContent = "…"; btn.disabled = true;
+          try {
+            const b64 = await new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1] || ""); r.onerror = () => fail(r.error); r.readAsDataURL(new Blob(chunks, { type: "audio/webm" })); });
+            resolve((await call("stt", { audio: b64 })).text || "");
+          } catch (e) { reject(e); }
+          finally { btn.textContent = label; btn.disabled = false; }
+        };
+        rec.start(250);
+      });
+    },
   };
   window.speechSynthesis?.getVoices(); // voices load lazily; ask early so the Thai one is there on first use
 
@@ -155,7 +182,7 @@
           <button class="btn ghost icon" id="c-web" title="เปิดใน Rakazo (ตั้งค่า, routines, memory)">${icon("external")}</button>
           <button class="btn ghost icon" id="c-more" title="${b ? "ลบบอท" : "ลบห้อง"}">${icon("trash")}</button></div>
         <div class="msgs" id="msgs"><div class="msgs-inner" id="msgs-inner"><div class="empty" style="min-height:40vh"><div class="typing"><i></i><i></i><i></i></div></div></div></div>
-        <div class="composer-wrap"><div class="help-bar" id="c-help" hidden><span>🖐</span><span class="grow" id="c-help-text"></span>
+        <div class="composer-wrap"><div class="help-bar" id="c-sugg" hidden></div><div class="help-bar" id="c-help" hidden><span>🖐</span><span class="grow" id="c-help-text"></span>
           <button class="btn sm" id="c-help-take">ช่วยบนหน้าจอ</button><button class="btn sm primary" id="c-help-done">${icon("play")}ให้บอททำต่อ</button>
           <button class="btn ghost sm" id="c-help-skip">ข้าม</button></div><div class="attach-row" id="c-att" hidden></div><div class="composer"><textarea id="c-input" rows="1" placeholder="${b ? "สั่งงาน " + esc(title) + "…" : "พิมพ์ @ชื่อบอท หรือ @everyone เพื่อเรียกบอทในห้อง…"}"></textarea>
           <button class="btn ghost icon" id="c-attach" title="แนบไฟล์ให้บอท (รูป PDF TXT MD CSV JSON ≤10 MB, ครั้งละ 4 ไฟล์)">${icon("clip")}</button>
@@ -203,14 +230,14 @@
       const body = m.text ? `<div class="bubble">${md(m.text)}</div>`
         : m.pending && !m.ask ? `<div class="bubble"><div class="typing" style="padding:4px 2px"><i></i><i></i><i></i></div></div>` : "";
       const a = m.ask;
-      const ask = !a ? "" : `<div class="approval"><div style="font-weight:600">${icon("sparkles")} ${(a.actions || []).some(x => x.id === "allow") ? "ขออนุญาต" : "บอทถาม"}</div><div style="margin-top:6px">${md(a.text)}</div>
+      const ask = !a ? "" : `<div class="approval"><div style="font-weight:600">${icon("sparkles")} ${(a.actions || []).some(x => x.id === "allow") ? "ขออนุญาต" : "บอทถาม"}</div><div style="margin-top:6px">${md(th(a.text))}</div>
         ${a.detail ? `<pre style="white-space:pre-wrap;margin:8px 0 0">${esc(th(a.detail))}</pre>` : ""}
         <div class="row">${a.status === "answered" ? `<span class="muted">ตอบแล้ว: ${esc(th(a.actions?.find(x => x.id === a.answer)?.label || a.answer || ""))}</span>`
           : (a.actions || []).map(x => `<button class="btn sm ${x.id === "allow" ? "primary" : x.id === "deny" ? "danger" : ""}" data-answer="${esc(x.id)}" data-msg="${esc(m.id)}">${esc(th(x.label))}</button>`).join("")}</div></div>`;
       return `<div class="msg ${mine ? "me" : "bot"} ${cont ? "cont" : ""}" data-id="${esc(m.id)}">
         ${mine ? "" : avatarOf(who, "sm", false)}
         <div class="col">${g && !mine && !cont ? `<div class="who" style="color:var(--muted)">${esc(who ? who.name : "บอท")}</div>` : ""}
-          ${tools}${body}${(m.files || []).map((f, i) => `<button class="file-chip" data-file="${esc(m.id)}" data-fi="${i}">📎 <b>${esc(f.name)}</b><span class="muted">${f.size ? Math.max(1, Math.round(f.size / 1024)) + " KB" : ""}</span></button>`).join("")}${ask}${cont || m.pending ? "" : `<div class="meta">${esc(relTime(m.at))}${!mine && m.text ? `<button class="say" data-say="${esc(m.id)}" title="อ่านออกเสียง">🔊</button>` : ""}</div>`}</div></div>`;
+          ${tools}${body}${(m.files || []).map((f, i) => `<button class="file-chip" data-file="${esc(m.id)}" data-fi="${i}">📎 <b>${esc(f.name)}</b><span class="muted">${f.size ? Math.max(1, Math.round(f.size / 1024)) + " KB" : ""}</span></button>`).join("")}${ask}${cont || m.pending ? "" : `<div class="meta">${esc(relTime(m.at))}${!mine && m.text ? `<button class="say" data-say="${esc(m.id)}" title="อ่านออกเสียง">🔊</button><button class="say" data-verify="${esc(m.id)}" title="ให้บอทอื่นตรวจข้อเท็จจริง">🔎</button>${App.assistant?.verifyBadge(m.id) || ""}` : ""}</div>`}</div></div>`;
     }
     // tool activity collapses into one "steps" block: latest step while running, "N steps" when done
     function stepsHtml(m) {
@@ -223,7 +250,7 @@
     }
     function renderAll() {
       if (!order.length) {
-        const s = b ? ["แนะนำตัวหน่อย", "เปิด example.com แล้วถ่ายภาพหน้าจอ", "รัน uname -a ใน terminal", "สรุปข่าวเทคโนโลยีวันนี้"]
+        const s = b ? ["แนะนำตัวหน่อย", "เปิด www.bcaccount.com แล้วถ่ายภาพหน้าจอ", "รัน uname -a ใน terminal", "สรุปข่าวเทคโนโลยีวันนี้"]
                     : ["@everyone แนะนำตัวทีละคน", "@everyone ประชุมวางแผนเพิ่มยอดขายเดือนหน้า แต่ละฝ่ายเสนอ 3 ข้อ"];
         inner.innerHTML = `<div class="empty"><div><div class="float">${b ? avatarOf(b, "xl") : `<div class="stack">${members().map(m => avatarOf(m, "lg")).join("")}</div>`}</div>
           <h2>${b ? "เริ่มงานกับ " + esc(b.name) : esc(g.name)}</h2><div class="muted">${esc(b ? roleOf(b) : "ห้องรวมของ " + members().map(m => m.name).join(", "))}</div>
@@ -321,7 +348,7 @@
           if (l && (l.text || l.tools.length)) upsert({ id: l.id, pending: false }); else remove(liveId(e.runId));
           if (speakRun && e.type === "run.completed") { // answer to a spoken message: read the bot's last reply aloud
             const last = [...msgs.values()].filter(x => x.runId === e.runId && x.text && x.author !== "me").pop() || (l?.text ? l : null);
-            if (last) { speakRun = false; App.voice.speak(last.text); }
+            if (last) { speakRun = false; App.voice.speak(last.text, last.author); }
           }
           running.delete(e.runId); waiting.delete(e.runId); helping.delete(e.runId);
           if (![...running.values()].includes(e.botId)) setWorking(e.botId, false);
@@ -368,6 +395,7 @@
       const btn = e.target.closest("[data-answer]");
       if (!btn) return;
       const m = msgs.get(btn.dataset.msg), row = btn.closest(".row");
+      if (btn.dataset.answer === "always" && !(await App.assistant.confirmAlways(m.ask?.detail))) return;
       row.querySelectorAll("button").forEach(x => x.disabled = true);
       try { await rk("threads/answer", { ...target, runId: m.runId, messageId: m.id, answer: btn.dataset.answer }); }
       catch (err) { toast("ตอบไม่สำเร็จ: " + err.message, "bad"); row.querySelectorAll("button").forEach(x => x.disabled = false); }
@@ -402,35 +430,27 @@
     send.onclick = doSend;
     // voice: 🎤 records, local whisper (host) turns it into text and sends it; the reply to a spoken message is read aloud
     const mic = $("#c-mic", view);
-    let rec = null, speakRun = false;
+    let speakRun = false;
     mic.onclick = async () => {
-      if (rec) return rec.stop();
-      let stream;
-      try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-      catch (e) { return toast("เปิดไมค์ไม่ได้: " + e.message, "bad"); }
-      call("stt.warm").catch(() => {});
-      App.voice.stop();
-      const chunks = [], started = Date.now();
-      rec = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
-      rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-      const tick = setInterval(() => { mic.textContent = "⏺ " + Math.round((Date.now() - started) / 1000) + "s"; if (Date.now() - started > 60000) rec?.stop(); }, 250);
-      mic.classList.add("rec"); mic.title = "คลิกเพื่อหยุดและส่ง";
-      rec.onstop = async () => {
-        clearInterval(tick); stream.getTracks().forEach(t => t.stop()); rec = null;
-        mic.classList.remove("rec"); mic.textContent = "…"; mic.disabled = true;
-        try {
-          const b64 = await base64Of(new Blob(chunks, { type: "audio/webm" }));
-          const { text } = await call("stt", { audio: b64 });
-          if (!text) toast("ไม่ได้ยินเสียงพูด ลองใหม่อีกครั้ง", "warn");
-          else { input.value = text; autosize(); speakRun = true; await doSend(); }
-        } catch (e) { toast(e.message, "bad"); }
-        finally { mic.textContent = "🎤"; mic.disabled = false; mic.title = "พูดสั่งงาน"; }
-      };
-      rec.start(250);
+      const heard = App.voice.listen(mic);
+      if (!heard) return; // second click: stopped, the first click's promise sends
+      mic.title = "คลิกเพื่อหยุดและส่ง";
+      try {
+        const text = await heard;
+        if (!text) toast("ไม่ได้ยินเสียงพูด ลองใหม่อีกครั้ง", "warn");
+        else { input.value = text; autosize(); speakRun = true; await doSend(); }
+      } catch (e) { toast(e.message, "bad"); }
+      finally { mic.title = "พูดสั่งงาน"; }
     };
     inner.addEventListener("click", e => {
       const say = e.target.closest("[data-say]");
-      if (say) App.voice.speak(msgs.get(say.dataset.say)?.text || "");
+      if (say) { const m = msgs.get(say.dataset.say); App.voice.speak(m?.text || "", m?.author); }
+      const ver = e.target.closest("[data-verify]");
+      if (ver) {
+        const m = msgs.get(ver.dataset.verify);
+        App.assistant.verify({ msgId: m.id, text: m.text, botName: bot(m.author)?.name || "บอท", at: m.at })
+          .then(v => toast("ผลตรวจ: " + v, v === "ถูกต้อง" ? "good" : "warn"), err => toast("ตรวจไม่สำเร็จ: " + err.message, "bad"));
+      }
     });
     async function sendText(text, files = []) {
       const nonce = "tmp-" + Date.now();
@@ -450,6 +470,7 @@
         const uploaded = [];
         for (const f of files) uploaded.push(await rk("artifacts/create", { ...target, name: f.name, mimeType: f.mimeType, contentBase64: await base64Of(f.file) }));
         await sendText(text, uploaded);
+        if (!g && text) App.assistant?.correction(text, [...msgs.values()], $("#c-sugg", view)).catch(() => {});
       } catch (e) { toast("ส่งไม่สำเร็จ: " + e.message, "bad"); input.value = text; attached.push(...files); drawAttached(); }
     }
     $("#c-stop", view).onclick = () => rk("threads/stop", target).then(resync, e => toast("หยุดไม่สำเร็จ: " + e.message, "bad"));

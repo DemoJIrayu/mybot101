@@ -66,6 +66,9 @@ const App = (() => {
     wand: '<path d="M4 20L15 9M13 7l4 4"/><path d="M17 3v3M15.5 4.5h3M20 8v2M19 9h2M10 3v2M9 4h2"/>',
     download: '<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>',
     clip: '<path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.2-8.2a3.3 3.3 0 0 1 4.7 4.7l-8.2 8.2a1.7 1.7 0 0 1-2.4-2.4l7.4-7.4"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+    smile: '<circle cx="12" cy="12" r="9"/><path d="M8 14a4.5 4.5 0 0 0 8 0M9 9.5h.01M15 9.5h.01"/>',
     grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
   };
   const icon = (n, cls = "i") => `<svg class="${cls}" viewBox="0 0 24 24">${ICONS[n] || ""}</svg>`;
@@ -76,7 +79,8 @@ const App = (() => {
   function avatar(name, opts = {}) {
     const [a, b] = PALETTE[(opts.color != null ? opts.color : hash(name)) % PALETTE.length];
     // first consonant/letter: Thai leading vowels (เ แ โ ใ ไ) and marks alone make a poor monogram
-    const letter = esc((String(name || "").match(/[ก-ฮA-Za-z0-9]/) || ["?"])[0]).toUpperCase();
+    const emoji = opts.emoji ?? App.persona?.emojiOf(name); // "" = explicitly none
+    const letter = emoji ? `<span class="av-emoji">${esc(emoji)}</span>` : esc((String(name || "").match(/[ก-ฮA-Za-z0-9]/) || ["?"])[0]).toUpperCase();
     return `<div class="av ${opts.size || ""} ${opts.state || ""}" style="background:linear-gradient(145deg,${a},${b})">${letter}</div>`;
   }
 
@@ -191,6 +195,7 @@ const App = (() => {
 
   // ---------- sidebar ----------
   const sideSections = []; // [{ render(filter) -> html, bind(root) }] contributed by chat.js
+  const THEMES = [["system", "🖥 ระบบ"], ["light", "☀️ สว่าง"], ["dark", "🌙 มืด"]];
   function renderSide() {
     const q = ($("#search").value || "").trim().toLowerCase();
     const list = $("#sideList"), html = sideSections.map(s => s.render(q)).join("");
@@ -222,6 +227,7 @@ const App = (() => {
     const q = llmMode !== "deepseek" && llm && (llm.busy || llm.deferred) ? `<span class="muted" style="font-size:11px;margin-left:6px">🧠 ${llm.busy} กำลังคิด${llm.deferred ? ` · ${llm.deferred} รอคิว` : ""}</span>` : "";
     $("#sideFoot").innerHTML = `
       ${llmMode ? `<div class="llm-mode" title="โมเดลที่บอททุกตัวใช้">${LLM_MODES.map(([m, t]) => `<button class="${m === llmMode ? "on" : ""}" data-mode="${m}">${t}</button>`).join("")}</div>` : ""}
+      <div class="llm-mode" title="ธีมของแอป (ระบบ = ตาม Windows)">${THEMES.map(([t, l]) => `<button class="${t === Theme.choice() ? "on" : ""}" data-theme-pick="${t}">${l}</button>`).join("")}</div>
       <div class="nav ${current && current.type === "work" ? "active" : ""}" data-go="work">${icon("inbox")}
         <span class="grow">ศูนย์งาน</span>${store.waiting ? `<span class="badge" title="งานที่รอคุณ">${store.waiting}</span>` : ""}</div>
       <div class="nav ${current && current.type === "live" ? "active" : ""}" data-go="live">${icon("grid")}<span class="grow">ห้องควบคุม</span></div>
@@ -230,6 +236,7 @@ const App = (() => {
       <div class="nav ${current && current.type === "mcp" ? "active" : ""}" data-go="mcp">${icon("cpu")}<span class="grow">MCP</span></div>`;
     $("#sideFoot").querySelectorAll("[data-go]").forEach(n => n.onclick = () => go({ type: n.dataset.go }));
     $("#sideFoot").querySelectorAll("[data-mode]").forEach(b => b.onclick = () => setLlmMode(b.dataset.mode));
+    $("#sideFoot").querySelectorAll("[data-theme-pick]").forEach(b => b.onclick = () => { Theme.set(b.dataset.themePick); renderSide(); });
   }
 
   // opening the app = ready to work: start the LLM and Rakazo if they are down

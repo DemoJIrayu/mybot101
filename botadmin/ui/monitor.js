@@ -45,7 +45,7 @@
     g.fillStyle = grad; g.fill();
     path(); g.strokeStyle = color; g.lineWidth = 2; g.shadowColor = color; g.shadowBlur = 8; g.stroke();
     const [lx, ly] = pts[pts.length - 1];
-    g.beginPath(); g.arc(lx, ly, 3, 0, 7); g.fillStyle = "#fff"; g.fill();
+    g.beginPath(); g.arc(lx, ly, 3, 0, 7); g.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--text"); g.fill();
   }
 
   register("monitor", view => {

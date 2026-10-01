@@ -21,7 +21,7 @@ public partial class MainWindow : Window
     {
         _devtoolsPort = devtoolsPort;
         InitializeComponent();
-        SourceInitialized += (_, _) => DarkTitleBar(this);
+        SourceInitialized += (_, _) => ApplyTheme(SavedLight());
         Loaded += async (_, _) => await InitWeb();
         _ = Task.Run(async () => { while (true) { await Task.Delay(15000); try { await Monitor.LlmWatchdog(); } catch { } } });
     }
@@ -35,6 +35,21 @@ public partial class MainWindow : Window
         int on = 1, caption = 0x000C0B0B; // COLORREF 0x00BBGGRR = #0B0B0C
         DwmSetWindowAttribute(hwnd, 20, ref on, 4);       // DWMWA_USE_IMMERSIVE_DARK_MODE
         DwmSetWindowAttribute(hwnd, 35, ref caption, 4);  // DWMWA_CAPTION_COLOR (Windows 11)
+    }
+
+    // the page picks the theme (ui/theme.js); the title bar and window background follow, and the next start paints right
+    static readonly string ThemeFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BotTeam", "theme.txt");
+    static bool SavedLight() { try { return File.ReadAllText(ThemeFile).Trim() == "light"; } catch { return false; } }
+    object ApplyTheme(bool light)
+    {
+        var c = light ? System.Drawing.Color.FromArgb(244, 244, 241) : System.Drawing.Color.FromArgb(11, 11, 12); // --bg
+        Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(c.R, c.G, c.B));
+        Web.DefaultBackgroundColor = c;
+        var hwnd = new WindowInteropHelper(this).Handle;
+        int dark = light ? 0 : 1, caption = c.R | c.G << 8 | c.B << 16; // COLORREF 0x00BBGGRR
+        DwmSetWindowAttribute(hwnd, 20, ref dark, 4);     // DWMWA_USE_IMMERSIVE_DARK_MODE
+        DwmSetWindowAttribute(hwnd, 35, ref caption, 4);  // DWMWA_CAPTION_COLOR (Windows 11)
+        return new { theme = light ? "light" : "dark" };
     }
 
     async Task InitWeb()
@@ -182,12 +197,20 @@ public partial class MainWindow : Window
             case "llm.mode.set": return await RakazoClient.SetLlmMode(Arg("mode"));
             case "rk": return await RakazoClient.Call(Arg("path"), args?["input"]);
             case "rakazo.backup": return await Task.Run(Monitor.Backup);
-            case "open.folder": // only our own backups folder
-                if (Path.GetFullPath(Arg("path")) is var dir && dir.StartsWith(Monitor.Root + @"\backups\") && Directory.Exists(dir))
+            case "open.folder": // only our own backups folder and the watched inbox
+                if (Path.GetFullPath(Arg("path")) is var dir && (dir.StartsWith(Monitor.Root + @"\backups\") || dir == Company.InboxDir) && Directory.Exists(dir))
                     Process.Start(new ProcessStartInfo("explorer.exe", $"\"{dir}\"") { UseShellExecute = true });
                 return null;
+            case "llm.ask": return await Company.Ask(Arg("system"), Arg("prompt"), args?["maxTokens"]?.GetValue<int>() ?? 800);
+            case "acct.events": return await Task.Run(() => Company.AcctEvents(args?["after"]?.GetValue<long>() ?? 0));
+            case "inbox.list": return await Task.Run(Company.InboxList);
+            case "inbox.read": return await Task.Run(() => Company.InboxRead(Arg("name")));
             case "stt.warm": await Speech.Warm(); return null;
             case "stt": return await Speech.Transcribe(Arg("audio"));
+            case "theme.set":
+                Directory.CreateDirectory(Path.GetDirectoryName(ThemeFile)!);
+                File.WriteAllText(ThemeFile, Arg("theme") == "light" ? "light" : "dark");
+                return ApplyTheme(Arg("theme") == "light");
             case "notify": return Notify(Arg("title"), Arg("body"), args?["route"], args?["force"]?.GetValue<bool>() == true);
             case "rk.subscribe":
             {

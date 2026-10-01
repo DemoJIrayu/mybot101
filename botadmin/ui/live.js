@@ -115,7 +115,7 @@
         }
       }
       drawLinks();
-      $("#lv-sum", view).innerHTML = `${links.length ? `<span class="chip" style="color:#c4b5fd">ส่งงาน ${links.length}</span>` : ""}<span class="chip good">กำลังทำ ${busy}</span><span class="chip warn">รอคุณ ${waiting}</span><span class="chip">จอเปิด ${screens}/${bots.length}</span>`;
+      $("#lv-sum", view).innerHTML = `${links.length ? `<span class="chip" style="color:var(--violet-soft)">ส่งงาน ${links.length}</span>` : ""}<span class="chip good">กำลังทำ ${busy}</span><span class="chip warn">รอคุณ ${waiting}</span><span class="chip">จอเปิด ${screens}/${bots.length}</span>`;
     }
     view.querySelectorAll(".live").forEach(el => el.onclick = () => go({ type: "bot", id: el.dataset.id }));
     $("#lv-boot", view).onclick = async e => {

@@ -28,7 +28,7 @@ public static class Monitor
     static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(3) };
 
     // admin key = the "gemma-" line; never shown in UI or logs
-    static string AdminKey() => File.ReadLines(Root + @"\llm-api-key.txt").First(l => l.StartsWith("gemma-"));
+    internal static string AdminKey() => File.ReadLines(Root + @"\llm-api-key.txt").First(l => l.StartsWith("gemma-"));
 
     public static string Run(string exe, string args, Encoding? enc = null)
     {
