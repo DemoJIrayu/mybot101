@@ -22,3 +22,18 @@ logs/
 models/
 *.gguf
 *.log
+
+# --- Agent team rebuild ---
+infra/.env
+*.pem
+*token*.txt
+node_modules/
+.next/
+dist/
+.venv/
+__pycache__/
+*.pyc
+coverage/
+playwright-report/
+test-results/
+*.sarif
