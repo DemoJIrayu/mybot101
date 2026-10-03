@@ -95,7 +95,7 @@ def build_report(pr: PullRequest, result: RunResult, bugs: list[Bug], tests_stat
 
     lines.append(f"### Bugs found: {len(bugs)}")
     if ordered:
-        lines += ["", "| # | Severity | Bug | File |", "|---|---|---|---|"]
+        lines += ["", "| Bug | Severity | Description | File |", "|---|---|---|---|"]
         for i, bug in enumerate(ordered, 1):
             title = bug.title.replace("|", "\\|")
             file = f"`{bug.file}`" if bug.file else ""
@@ -104,7 +104,7 @@ def build_report(pr: PullRequest, result: RunResult, bugs: list[Bug], tests_stat
         for i, bug in enumerate(ordered, 1):
             lines += [
                 "<details>",
-                f"<summary>{i}. {bug.title}</summary>",
+                f"<summary>Bug {i}: {bug.title}</summary>",
                 "",
                 bug.details,
                 "",

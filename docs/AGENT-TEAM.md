@@ -143,9 +143,15 @@ python -m agent_team lead "..." --fix-rounds 1      # fewer QA→Dev fix loops
 3. **Dev** does the tasks one by one in `sandbox-dev` (one shared workspace).
 4. **QA** gets the combined change as a patch in `sandbox-qa`, adds tests and reports
    bugs. Its tests are copied back into Dev's workspace.
-5. If QA found bugs, **Dev fixes them** and QA re-tests (up to `--fix-rounds`, default 2).
+5. If QA found **critical or high** bugs, **Dev fixes them** and QA re-tests (up to
+   `--fix-rounds`, default 2). Medium/low bugs don't loop; they're listed in the PR for
+   you to judge. Weakening a safeguard (disabled limits, skipped validation or TLS checks,
+   overridden private library APIs) always counts as high.
 6. The Lead writes the PR description (summary, verification, open issues, verdict) and
    **opens one PR** with your `gh` login. You review and merge it; the pipeline checks it.
+
+Test budget: QA adds at most 15 tests in the first round and 5 per re-test round, in one
+`tests/test_<module>_qa.py` file per module (extended, never a new file per round).
 
 Stops without a PR when: the plan is rejected, a Dev task doesn't finish (partial patch
 saved), or the change touches `.github/`, `infra/` or `agents/`. Everything from a run
