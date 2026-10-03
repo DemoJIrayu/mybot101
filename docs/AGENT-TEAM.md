@@ -151,12 +151,6 @@ Agents will work on branches and open PRs; they never push to `main`.
 
 ## Budget rules
 
-- **Per run:** each agent stops at a token budget (Dev 400k, QA 500k, Lead 300k;
-  override with `AGENT_MAX_TOKENS`). Older tool outputs are shortened in the
-  conversation (last 6 kept in full), because every step re-sends the whole history.
-- **Check spend per agent:**
-  `source infra/.env && curl -s localhost:4000/key/info -H "Authorization: Bearer $QA_AGENT_KEY" | jq .info.spend`
-
 - `infra/litellm/config.yaml` → `max_budget`: hard monthly cap for all agents (default $10).
 - Free-model availability changes; if `worker` keeps falling back, check
   https://openrouter.ai/models?max_price=0 and update the model ID.

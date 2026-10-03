@@ -90,29 +90,3 @@ def test_bad_json_arguments_are_reported_back():
 def test_protected_paths_are_detected():
     paths = ["web/app.ts", ".github/workflows/ci.yml", "infra/x", "agents/agent_team/cli.py"]
     assert protected_changes(paths) == paths[1:]
-
-
-def test_old_tool_outputs_are_trimmed_but_recent_kept():
-    from agent_team.agent import compact_history
-
-    msgs = [{"role": "system", "content": "s"}]
-    for i in range(10):
-        msgs.append({"role": "assistant", "content": ""})
-        msgs.append({"role": "tool", "tool_call_id": str(i), "content": f"{i}" + "x" * 5000})
-    compact_history(msgs, keep_recent=3)
-    tools = [m for m in msgs if m["role"] == "tool"]
-    assert all(m["content"].endswith("[trimmed]") for m in tools[:7])
-    assert all(len(m["content"]) == 5001 for m in tools[7:])
-    assert tools[0]["content"].startswith("0xxx") and tools[0]["tool_call_id"] == "0"
-    before = tools[0]["content"]
-    compact_history(msgs, keep_recent=3)  # idempotent
-    assert tools[0]["content"] == before
-
-
-def test_agent_stops_when_token_budget_is_spent():
-    client = FakeClient([_response(content="hmm") for _ in range(5)])  # 15 tokens each
-    agent = Agent(client, "worker", FakeToolbox(), "sys", max_tokens=40, log=lambda _: None)
-    result = agent.run("t")
-    assert not result.finished and result.steps == 4
-    assert "budget of 40" in result.summary
-    assert len(client.requests) == 3
