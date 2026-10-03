@@ -4,7 +4,7 @@ Rebuilding the BotTeam demo into a 3-agent **AI dev & QA team** (Lead, Dev, QA)
 with a DevSecOps pipeline, sized for a 16 GB Windows laptop.
 
 - **Stack:** Python, Node/TypeScript, Next.js
-- **Models:** DeepSeek (Lead) + Qwen3-Coder free on OpenRouter (Dev, QA), DeepSeek as fallback
+- **Models:** DeepSeek V4-Pro (Lead) + DeepSeek Flash (Dev, QA), V4-Pro as backup
 - **Legacy:** `botadmin/`, `botoffice/`, `rakazo/` are the original demo. Kept for reference,
   security-scanned by CI, but not built or tested.
 
@@ -13,8 +13,8 @@ Windows (16 GB)
 └─ WSL2 Ubuntu 24.04  (capped at 8 GB)
    └─ Docker Engine
       ├─ litellm      127.0.0.1:4000  model router + $ budget cap
-      │    ├─ lead        -> DeepSeek
-      │    └─ worker      -> Qwen3-Coder :free  -> falls back to DeepSeek
+      │    ├─ lead        -> DeepSeek V4-Pro
+      │    └─ worker      -> DeepSeek Flash  -> falls back to V4-Pro
       ├─ postgres                       spend + key tracking
       └─ sandbox-lead / -dev / -qa      on demand, no keys, no LAN, internet only
 agents/ (runs in WSL) ── docker exec ──> sandbox      LLM calls ──> litellm
@@ -40,7 +40,7 @@ infra/       WSL, Docker, LiteLLM, sandbox image              (step 1, done)
    bash infra/wsl/setup-docker.sh
    ```
    Reopen Ubuntu, then `docker run --rm hello-world`.
-3. **Keys:** create a DeepSeek key and an OpenRouter key; set a monthly spend limit in both.
+3. **Keys:** create a DeepSeek key and top up a small prepaid balance (your hard limit).
    ```bash
    cd infra && cp .env.example .env && nano .env     # secrets: openssl rand -hex 24
    ```
@@ -151,7 +151,11 @@ Agents will work on branches and open PRs; they never push to `main`.
 
 ## Budget rules
 
+- **Per run:** each agent stops at a token budget (Dev 400k, QA 500k, Lead 300k;
+  override with `AGENT_MAX_TOKENS`). Older tool outputs are shortened in the
+  conversation (last 6 kept in full), because every step re-sends the whole history.
+- **Check spend per agent:**
+  `source infra/.env && curl -s localhost:4000/key/info -H "Authorization: Bearer $QA_AGENT_KEY" | jq .info.spend`
+
 - `infra/litellm/config.yaml` → `max_budget`: hard monthly cap for all agents (default $10).
-- Free-model availability changes; if `worker` keeps falling back, check
-  https://openrouter.ai/models?max_price=0 and update the model ID.
 - Provider keys live only in the LiteLLM container; agents get their own LiteLLM keys.
