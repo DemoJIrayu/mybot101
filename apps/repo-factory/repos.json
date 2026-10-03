@@ -1,0 +1,9 @@
+{
+  "default_visibility": "private",
+  "template": "",
+  "repositories": [
+    "noname-chatbot-api",
+    "noname-chatbot-web",
+    "noname-chatbot-admin"
+  ]
+}
