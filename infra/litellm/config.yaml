@@ -7,12 +7,20 @@
 #                    long agent runs ~$0.05
 #   worker-paid   -> DeepSeek V4-Pro, backup used automatically if Flash errors
 #                    (the alias name is kept so existing agent keys keep working)
+#   coder-or      -> Qwen3-Coder (paid) via OpenRouter, used by Dev; falls back to
+#                    `worker` (DeepSeek Flash) if OpenRouter fails or is out of credit
+#
+# Which agent uses which alias: agents/agent_team/config.py (ROLES), overridable per
+# machine with LEAD_MODEL / DEV_MODEL / QA_MODEL in infra/.env. A new alias must also
+# be allowed on that agent's key: bash infra/create-agent-keys.sh
 #
 # History: worker was Qwen3-Coder :free on OpenRouter until OpenRouter removed the free
 # tier for it (404 "This model is unavailable for free", 2026-10-03).
 #
 # Check model IDs before changing them; providers rename models:
 #   DeepSeek:   https://api-docs.deepseek.com/quick_start/pricing
+#   OpenRouter: https://openrouter.ai/qwen/qwen3-coder  ($0.22 in / $1.80 out per 1M,
+#               checked 2026-10-03)
 # Model IDs checked 2026-10-01. DeepSeek charges half price off-peak; peak is
 # 08:00-11:00 and 13:00-17:00 Bangkok time on weekdays.
 
@@ -32,9 +40,15 @@ model_list:
       model: deepseek/deepseek-v4-pro
       api_key: os.environ/DEEPSEEK_API_KEY
 
+  - model_name: coder-or
+    litellm_params:
+      model: openrouter/qwen/qwen3-coder
+      api_key: os.environ/OPENROUTER_API_KEY
+
 router_settings:
   fallbacks:
     - worker: ["worker-paid"]
+    - coder-or: ["worker"]
   num_retries: 2
   timeout: 120
 

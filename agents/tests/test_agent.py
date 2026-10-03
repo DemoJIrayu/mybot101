@@ -152,3 +152,21 @@ def test_deepseek_cache_field_is_understood():
 
     assert _cached_tokens(NS(prompt_cache_hit_tokens=42)) == 42
     assert _cached_tokens(NS(prompt_tokens_details=NS(cached_tokens=None))) == 0
+
+
+def test_env_file_reader_handles_comments_and_quotes(tmp_path, monkeypatch):
+    from agent_team.config import load_env_file
+
+    env = tmp_path / ".env"
+    env.write_text(
+        '# comment\nA_KEY=sk-abc   # note\nB_KEY="quoted"\nC_KEY=\n  # indented comment\n'
+    )
+    for k in ("A_KEY", "B_KEY", "C_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("B_KEY", "from-real-env")
+    load_env_file(env)
+    import os
+
+    assert os.environ["A_KEY"] == "sk-abc"
+    assert os.environ["B_KEY"] == "from-real-env"  # real env wins
+    assert os.environ["C_KEY"] == ""

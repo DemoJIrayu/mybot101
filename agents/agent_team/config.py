@@ -9,11 +9,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = REPO_ROOT / "infra" / ".env"
 
-# Which LiteLLM alias and sandbox each role uses.
+# Which LiteLLM alias each role uses (aliases are defined in infra/litellm/config.yaml).
+# Override per machine in infra/.env: LEAD_MODEL=..., DEV_MODEL=..., QA_MODEL=...
 ROLES = {
     # max_tokens: new (uncached) input + output tokens per run, a cost safety net.
     "lead": {"model": "lead", "key_var": "LEAD_AGENT_KEY", "max_steps": 30, "max_tokens": 200_000},
-    "dev": {"model": "worker", "key_var": "DEV_AGENT_KEY", "max_steps": 30, "max_tokens": 300_000},
+    "dev": {
+        "model": "coder-or",
+        "key_var": "DEV_AGENT_KEY",
+        "max_steps": 30,
+        "max_tokens": 300_000,
+    },
     "qa": {"model": "worker", "key_var": "QA_AGENT_KEY", "max_steps": 40, "max_tokens": 400_000},
 }
 
@@ -27,7 +33,8 @@ def load_env_file(path: Path = ENV_FILE) -> None:
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, value = line.split("=", 1)
-        os.environ.setdefault(key.strip(), value.strip())
+        value = value.split(" #", 1)[0].strip().strip('"').strip("'")
+        os.environ.setdefault(key.strip(), value)
 
 
 @dataclass(frozen=True)
