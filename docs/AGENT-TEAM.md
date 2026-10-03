@@ -4,7 +4,7 @@ Rebuilding the BotTeam demo into a 3-agent **AI dev & QA team** (Lead, Dev, QA)
 with a DevSecOps pipeline, sized for a 16 GB Windows laptop.
 
 - **Stack:** Python, Node/TypeScript, Next.js
-- **Models:** DeepSeek V4-Pro (Lead) + DeepSeek Flash (Dev, QA), V4-Pro as backup
+- **Models:** DeepSeek V4-Pro (Lead), Qwen3-Coder via OpenRouter (Dev), DeepSeek Flash (QA)
 - **Legacy:** `botadmin/`, `botoffice/`, `rakazo/` are the original demo. Kept for reference,
   security-scanned by CI, but not built or tested.
 
@@ -13,8 +13,9 @@ Windows (16 GB)
 └─ WSL2 Ubuntu 24.04  (capped at 8 GB)
    └─ Docker Engine
       ├─ litellm      127.0.0.1:4000  model router + $ budget cap
-      │    ├─ lead        -> DeepSeek V4-Pro
-      │    └─ worker      -> DeepSeek Flash  -> falls back to V4-Pro
+      │    ├─ lead        -> DeepSeek V4-Pro                       (Lead)
+      │    ├─ coder-or    -> Qwen3-Coder via OpenRouter -> Flash   (Dev)
+      │    └─ worker      -> DeepSeek Flash -> V4-Pro              (QA)
       ├─ postgres                       spend + key tracking
       └─ sandbox-lead / -dev / -qa      on demand, no keys, no LAN, internet only
 agents/ (runs in WSL) ── docker exec ──> sandbox      LLM calls ──> litellm
@@ -180,6 +181,22 @@ useful information, not a broken pipeline.
 
 Agents will work on branches and open PRs; they never push to `main`.
 
+## Choosing models
+
+Two places, both reviewed through PRs (except `.env`, which stays on your machine):
+
+| What | Where |
+|---|---|
+| Alias → provider model, and fallbacks | `infra/litellm/config.yaml` |
+| Agent → alias (defaults) | `agents/agent_team/config.py` (`ROLES`) |
+| Agent → alias (this machine only) | `infra/.env`: `LEAD_MODEL`, `DEV_MODEL`, `QA_MODEL` |
+| Which aliases each agent's key may use, and its budget | `infra/create-agent-keys.sh` |
+
+After changing aliases: `bash infra/create-agent-keys.sh` (updates existing keys) and
+`cd infra && docker compose restart litellm`. Check which model really answered with
+`/spend/logs` (see below). OpenRouter forwards code to third-party providers: in
+openrouter.ai → Settings → Privacy, turn off providers that may train on your inputs.
+
 ## Budget rules
 
 - **Per run:** each agent stops at a budget of *new* tokens: uncached input plus output
@@ -187,6 +204,8 @@ Agents will work on branches and open PRs; they never push to `main`.
   cheaper on DeepSeek, so it isn't counted. When a conversation passes ~30k tokens,
   older tool outputs are shortened in one go (last 6 kept), so the cached start of the
   conversation stays stable between compactions.
+- **Monthly per agent (LiteLLM keys):** Lead $5, Dev $5 (Qwen3-Coder costs more than
+  Flash: $0.22 in / $1.80 out per 1M tokens), QA $2.
 - **Check spend per agent:**
   `source infra/.env && curl -s localhost:4000/key/info -H "Authorization: Bearer $QA_AGENT_KEY" | jq .info.spend`
 
