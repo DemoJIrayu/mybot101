@@ -73,7 +73,10 @@ PLAN = [
 class Script:
     """Scripted agents. Records each task prompt so tests can inspect them."""
 
-    def __init__(self, qa_bugs_per_round=(1, 0), dev_extra_files=(), qa_extra_files=()):
+    def __init__(
+        self, qa_bugs_per_round=(1, 0), dev_extra_files=(), qa_extra_files=(), severity="high"
+    ):
+        self.severity = severity
         self.prompts = []
         self.qa_round = 0
         self.qa_bugs_per_round = list(qa_bugs_per_round)
@@ -109,7 +112,7 @@ class Script:
                     # Simulates a sneaky write through the shell, bypassing write_file.
                     box.sandbox.write_file(f"/workspace/repo/{path}", "hacked\n")
                 for i in range(self.qa_bugs_per_round[self.qa_round - 1]):
-                    box.call("report_bug", {"title": f"bug {i}", "severity": "high",
+                    box.call("report_bug", {"title": f"bug {i}", "severity": self.severity,
                                             "details": "greet(None) crashes"})  # fmt: skip
                 box.call("finish", {"summary": f"qa round {self.qa_round}"})
         except Finished as done:
@@ -177,7 +180,7 @@ def test_bugs_left_after_last_round_still_open_pr_flagged(tmp_path, origin, sand
     orch, calls = _orchestrator(tmp_path, origin, sandboxes, script, max_fix_rounds=1)
     out = orch.run()
     assert out.status == "pr_opened" and len(out.open_bugs) == 1
-    assert "Bugs still open: 1" in calls["summary_prompt"]
+    assert "Blocking (critical/high) bugs still open: 1" in calls["summary_prompt"]
 
 
 def test_protected_paths_block_the_pr(tmp_path, origin, sandboxes):
@@ -236,3 +239,24 @@ def test_prompts():
     assert "task 1 of 2" in text and "do NOT do these now): Add shout()" in text
     assert "Remove the xfail" in fix_prompt("Goal", [Bug("b", "high", "d", "f.py")])
     assert format_plan("G", plan).startswith("Goal: G\n\n1. Add greet()")
+
+
+def test_minor_bugs_do_not_send_work_back_to_dev(tmp_path, origin, sandboxes):
+    script = Script(qa_bugs_per_round=(2,), severity="medium")
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, script)
+    out = orch.run()
+    assert [r for r, _ in script.prompts] == ["lead", "dev", "dev", "qa"]  # no fix round
+    assert out.status == "pr_opened" and len(out.open_bugs) == 2
+    assert "blocking" not in out.message
+    assert "minor (medium/low) bugs listed for a human: 2" in calls["summary_prompt"]
+
+
+def test_fix_prompt_lists_only_blocking_bugs_with_safe_numbering():
+    from agent_team.lead import blocking
+
+    bugs = [Bug("crash", "critical", "d"), Bug("ugly", "low", "d"), Bug("wrong", "high", "d")]
+    must = blocking(bugs)
+    assert [b.title for b in must] == ["crash", "wrong"]
+    text = fix_prompt("G", must)
+    assert "Bug 1 [critical] crash" in text and "Bug 2 [high] wrong" in text
+    assert "#1" not in text and "ugly" not in text

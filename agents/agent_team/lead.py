@@ -30,6 +30,13 @@ from agent_team.workspace import (
 
 RunAgent = Callable[[str, Toolbox, str], RunResult]
 
+# Only these send work back to Dev; medium/low bugs are listed in the PR for a human.
+BLOCKING_SEVERITIES = ("critical", "high")
+
+
+def blocking(bugs: list[Bug]) -> list[Bug]:
+    return [b for b in bugs if b.severity in BLOCKING_SEVERITIES]
+
 
 @dataclass
 class LeadOutcome:
@@ -73,7 +80,9 @@ def dev_task_prompt(
 
 def _bug_list(bugs: list[Bug]) -> str:
     return "\n".join(
-        f"{i}. [{b.severity}] {b.title}" + (f" ({b.file})" if b.file else "") + f"\n   {b.details}"
+        f"Bug {i} [{b.severity}] {b.title}"
+        + (f" ({b.file})" if b.file else "")
+        + f"\n   {b.details}"
         for i, b in enumerate(bugs, 1)
     )
 
@@ -81,7 +90,7 @@ def _bug_list(bugs: list[Bug]) -> str:
 def fix_prompt(goal: str, bugs: list[Bug]) -> str:
     return (
         f"QA tested the team's change for this goal: {goal}\n\n"
-        f"QA found these bugs:\n{_bug_list(bugs)}\n\n"
+        f"QA found these blocking (critical/high) bugs:\n{_bug_list(bugs)}\n\n"
         "QA's tests are now in your workspace. Tests that expose these bugs are marked as "
         'expected failures (@pytest.mark.xfail(strict=True, reason="BUG: ...") or '
         "test.fail(...) in Playwright).\n"
@@ -90,7 +99,10 @@ def fix_prompt(goal: str, bugs: list[Bug]) -> str:
         "runs normally.\n"
         "3. Do not delete or weaken QA's tests. If you believe a report is wrong, leave the "
         "test as it is and explain why in your summary.\n"
-        "4. Run the full test suite; it must pass. Then call finish with what you fixed."
+        "4. Fix them simply and without weakening any safeguard (see your rules); if the "
+        "right fix is to reject an input with a clear error, do that.\n"
+        "5. Run the full test suite and the linter; both must pass. Then call finish with "
+        "what you fixed."
     )
 
 
@@ -118,7 +130,9 @@ def summary_prompt(
     return (
         f"Goal: {goal}\n\nPlan:\n{format_plan(goal, plan)}\n\nDev results:\n{dev}\n\n"
         f"Final QA report:\n{qa_report}\n\nFiles changed:\n{stat}\n\n"
-        f"Bugs still open: {len(open_bugs)}\n\n"
+        f"Blocking (critical/high) bugs still open: {len(blocking(open_bugs))}; "
+        f"minor (medium/low) bugs listed for a human: "
+        f"{len(open_bugs) - len(blocking(open_bugs))}\n\n"
         "Write the pull request description in Markdown with these sections: "
         "'## Summary' (3-6 bullets of what changed), '## How it was verified' "
         "(tests and QA), '## Open issues' (open bugs or risks, or 'None'). End with "
@@ -129,7 +143,7 @@ def summary_prompt(
 
 
 def fallback_summary(open_bugs: list[Bug]) -> str:
-    verdict = "needs human attention" if open_bugs else "ready for review"
+    verdict = "needs human attention" if blocking(open_bugs) else "ready for review"
     return (
         "## Summary\n\nSee the plan and QA report below.\n\n"
         f"## Open issues\n\n{_bug_list(open_bugs) or 'None'}\n\nVerdict: {verdict}\n"
@@ -251,16 +265,20 @@ class Orchestrator:
             self._save(f"qa-round-{round_no + 1}.md", report)
             apply_patch(dev_sb, qa_patch)  # QA's tests become part of the change
             bugs = qa_box.bugs
-            if not bugs:
-                self.log("✓ QA found no bugs")
+            must_fix = blocking(bugs)
+            if not must_fix:
+                minor = f" ({len(bugs)} minor issue(s) listed in the PR)" if bugs else ""
+                self.log(f"✓ QA found no blocking bugs{minor}")
                 break
             if round_no == self.max_fix_rounds:
-                self.log(f"⚠️  {len(bugs)} bug(s) still open after {round_no} fix round(s)")
+                self.log(
+                    f"⚠️  {len(must_fix)} blocking bug(s) still open after {round_no} fix round(s)"
+                )
                 break
-            self.log(f"\n▶ Dev fixing {len(bugs)} bug(s) (round {round_no + 1})")
-            fix = self.run_agent("dev", Toolbox(dev_sb), fix_prompt(self.goal, bugs))
+            self.log(f"\n▶ Dev fixing {len(must_fix)} blocking bug(s) (round {round_no + 1})")
+            fix = self.run_agent("dev", Toolbox(dev_sb), fix_prompt(self.goal, must_fix))
             done.append((PlanTask(f"Fix QA round {round_no + 1}", "", ""), fix))
-            earlier = bugs
+            earlier = must_fix
 
         names, stat, patch = collect_diff(dev_sb)
         blocked = disallowed_changes("dev", names, allow_protected=False)
@@ -289,7 +307,7 @@ class Orchestrator:
         self._save("pr-body.md", body)
         title = f"agent(lead): {self.goal.splitlines()[0]}"[:72]
         url = self.open_pr(title, body, patch_file)
-        status_note = f" with {len(bugs)} open bug(s)" if bugs else ""
+        status_note = f" with {len(blocking(bugs))} blocking bug(s) open" if blocking(bugs) else ""
         return self._outcome(
             "pr_opened", f"Pull request opened{status_note}: {url}", plan=plan,
             open_bugs=bugs, pr_url=url,
