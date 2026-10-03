@@ -16,14 +16,15 @@ Windows (16 GB)
       │    ├─ lead        -> DeepSeek
       │    └─ worker      -> Qwen3-Coder :free  -> falls back to DeepSeek
       ├─ postgres                       spend + key tracking
-      └─ sandbox-lead / -dev / -qa      on demand, no LAN access
+      └─ sandbox-lead / -dev / -qa      on demand, no keys, no LAN, internet only
+agents/ (runs in WSL) ── docker exec ──> sandbox      LLM calls ──> litellm
 GitHub Actions: gitleaks · Semgrep · CodeQL · Trivy · dependency review · tests
 ```
 
 ## Planned layout
 
 ```
-agents/      Python — orchestrator + Lead/Dev/QA agents      (step 2)
+agents/      Python — Dev agent (Lead/QA next)                 (step 2, done)
 web/         Next.js — dashboard to watch and approve agents (later)
 infra/       WSL, Docker, LiteLLM, sandbox image              (step 1, done)
 .github/     DevSecOps pipeline                               (step 3, done)
@@ -60,6 +61,41 @@ infra/       WSL, Docker, LiteLLM, sandbox image              (step 1, done)
    docker compose --profile sandbox stop      # when idle, to free RAM
    ```
 
+## Step 2 — the Dev agent
+
+How it works:
+
+1. The agent gets a **fresh clone** of `main` inside its sandbox.
+2. It reads, writes and runs tests **only inside the sandbox** (`docker exec`). The
+   sandbox holds no keys and can't reach your LAN, LiteLLM or Postgres.
+3. You see the diff. If it touches `.github/`, `infra/` or `agents/` it's refused
+   (agents can't weaken their own guardrails).
+4. Only if you answer `y`, the patch goes to a new `agent/dev-…` branch, is pushed with
+   **your** `gh` login, and a PR is opened. The pipeline checks it before merge.
+
+Setup (once):
+
+```bash
+cd ~/mybot101/infra
+docker compose up -d                                # applies the new networks
+docker compose --profile sandbox up -d --build      # first build ~5–10 min
+sudo bash wsl/lan-block.sh                          # rerun after each WSL restart
+cd .. && bash infra/create-agent-keys.sh            # per-agent keys + budgets
+
+sudo apt install -y python3-venv
+cd agents && python3 -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]" && pytest -q
+```
+
+Run a task (from `agents/`, with the venv active):
+
+```bash
+python -m agent_team dev "Create a Python package in apps/calc with add(a, b) and \
+  divide(a, b) (raise ValueError on divide by zero), plus pytest tests. Run the tests."
+```
+
+Free sandboxes when done: `cd infra && docker compose --profile sandbox stop`.
+
 ## Step 3 — CI pipeline
 
 `.github/workflows/devsecops.yml` runs on every push, PR and weekly.
@@ -77,8 +113,9 @@ Expect the first run to show **alerts on the legacy code** in the Security tab. 
 useful information, not a broken pipeline.
 
 **GitHub settings to turn on:**
-- Settings → Code security: Dependabot alerts, secret scanning, push protection
-- Settings → Branches → `main`: require a PR and the `devsecops` checks to pass
+- Settings → Code security: Dependency graph, Dependabot alerts, secret scanning, push protection
+- Protect `main` (PR + passing checks required, also for admins):
+  `bash .github/scripts/protect-main.sh`
 
 Agents will work on branches and open PRs; they never push to `main`.
 

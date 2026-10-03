@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-team"
+version = "0.1.0"
+description = "Lead / Dev / QA coding agents that work inside Docker sandboxes"
+requires-python = ">=3.11"
+dependencies = ["openai>=1.40,<3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+agent-team = "agent_team.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_team*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S"]
+# S603/S607: we call `docker`, `git` and `gh` with argument lists (never shell=True);
+# the sandbox container is the security boundary for agent-chosen commands.
+ignore = ["S603", "S607"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S108"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
