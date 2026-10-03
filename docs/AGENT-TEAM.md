@@ -24,7 +24,7 @@ GitHub Actions: gitleaks · Semgrep · CodeQL · Trivy · dependency review · t
 ## Planned layout
 
 ```
-agents/      Python — Dev agent (Lead/QA next)                 (step 2, done)
+agents/      Python — Dev + QA agents (Lead next)              (steps 2 & 4, done)
 web/         Next.js — dashboard to watch and approve agents (later)
 infra/       WSL, Docker, LiteLLM, sandbox image              (step 1, done)
 .github/     DevSecOps pipeline                               (step 3, done)
@@ -95,6 +95,36 @@ python -m agent_team dev "Create a Python package in apps/calc with add(a, b) an
 ```
 
 Free sandboxes when done: `cd infra && docker compose --profile sandbox stop`.
+
+## Step 4 — the QA agent
+
+Point it at a pull request; it tests that change in its own sandbox.
+
+```bash
+cd ~/mybot101/agents && . .venv/bin/activate
+python -m agent_team qa --pr 3
+python -m agent_team qa --pr 3 "Focus on float and type edge cases"   # optional focus
+```
+
+What it does:
+
+1. Fetches the PR into `sandbox-qa`. **Open PR:** tests the PR's head. **Merged PR:** tests
+   current `main`.
+2. Reads the diff, runs the existing tests, then writes **new** tests for edge cases,
+   invalid input, errors and security-relevant behaviour. Python → pytest; Next.js →
+   Playwright e2e (`@playwright/test@1.55.0`, matching the sandbox browsers).
+3. Tests that expose a real bug stay in as **expected failures**
+   (`xfail(strict=True)` / `test.fail()`) and each bug is recorded with severity.
+   CI stays green, and when Dev fixes the bug the strict xfail turns red as a
+   reminder to remove the marker.
+4. Writes a report to `runs/…-qa-prN.md` and asks you two things:
+   - open a PR with the new tests (into `main` for merged PRs, into the PR's branch for
+     open ones);
+   - post the report as a comment on the PR.
+
+Guardrails: QA may only change test files (tests/, test_*.py, *.test.ts, *.spec.ts, e2e/,
+playwright config, package.json). This is checked on the final diff, so it can't be
+bypassed through shell commands, and `--allow-protected` doesn't override it.
 
 ## Step 3 — CI pipeline
 

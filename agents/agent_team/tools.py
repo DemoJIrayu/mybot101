@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import posixpath
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from agent_team.sandbox import WORKDIR, Sandbox
@@ -12,6 +15,32 @@ MAX_OUTPUT = 12_000  # characters returned to the model per tool call
 
 class ToolError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class Bug:
+    title: str
+    severity: str
+    details: str
+    file: str = ""
+
+
+SEVERITIES = ("critical", "high", "medium", "low")
+
+# Test-only write policy for the QA agent.
+_TEST_DIRS = {"tests", "test", "__tests__", "e2e"}
+_TEST_FILE = re.compile(
+    r"^(test_.*\.py|.*_test\.py|conftest\.py"
+    r"|.*\.(test|spec)\.(ts|tsx|js|jsx|mjs|cjs)"
+    r"|playwright\.config\.(ts|js|mjs|cjs)"
+    r"|package\.json|package-lock\.json)$"
+)
+
+
+def is_test_path(rel_path: str) -> bool:
+    """True for files the QA agent may create or edit (tests and test tooling only)."""
+    parts = rel_path.strip("/").split("/")
+    return bool(_TEST_DIRS.intersection(parts[:-1])) or bool(_TEST_FILE.match(parts[-1]))
 
 
 class Finished(Exception):
@@ -87,13 +116,47 @@ TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 
+REPORT_BUG_SPEC = _fn(
+    "report_bug",
+    "Record a bug you found in the code under test. Call once per distinct bug, "
+    "with steps or a failing test that shows it.",
+    {
+        "title": {"type": "string", "description": "One-line description"},
+        "severity": {"type": "string", "enum": list(SEVERITIES)},
+        "details": {
+            "type": "string",
+            "description": "What happens, what should happen, how to reproduce",
+        },
+        "file": {"type": "string", "description": "Main file involved, if known"},
+    },
+    ["title", "severity", "details"],
+)
+
+
 class Toolbox:
-    def __init__(self, sandbox: Sandbox):
+    def __init__(
+        self,
+        sandbox: Sandbox,
+        *,
+        can_write: Callable[[str], bool] | None = None,
+        write_rule: str = "",
+        bug_reports: bool = False,
+    ):
         self.sandbox = sandbox
+        self.can_write = can_write
+        self.write_rule = write_rule
+        self.bug_reports = bug_reports
+        self.bugs: list[Bug] = []
+
+    @property
+    def specs(self) -> list[dict[str, Any]]:
+        return TOOL_SPECS + ([REPORT_BUG_SPEC] if self.bug_reports else [])
 
     def call(self, name: str, args: dict[str, Any]) -> str:
         """Run a tool. Returns text for the model; raises Finished on `finish`."""
         handler = getattr(self, f"_tool_{name}", None)
+        if name == "report_bug" and not self.bug_reports:
+            handler = None
         if handler is None:
             return f"ERROR: unknown tool {name!r}"
         try:
@@ -118,6 +181,11 @@ class Toolbox:
 
     def _tool_write_file(self, path: str, content: str) -> str:
         full = resolve_path(path)
+        rel = full[len(WORKDIR) + 1 :]
+        # Guidance only: run_command could still change other files, so the real
+        # enforcement is the check on the final diff (see cli.py).
+        if self.can_write is not None and not self.can_write(rel):
+            raise ToolError(f"not allowed to write {rel!r}. {self.write_rule}".strip())
         res = self.sandbox.write_file(full, content)
         if not res.ok:
             return f"ERROR: {res.output.strip()}"
@@ -129,6 +197,15 @@ class Toolbox:
         timeout = max(5, min(int(timeout), 600))
         res = self.sandbox.sh(command, timeout=timeout)
         return f"exit code: {res.code}\n{res.output}"
+
+    def _tool_report_bug(self, title: str, severity: str, details: str, file: str = "") -> str:
+        severity = str(severity).lower()
+        if severity not in SEVERITIES:
+            raise ToolError(f"severity must be one of {', '.join(SEVERITIES)}")
+        if not str(title).strip() or not str(details).strip():
+            raise ToolError("title and details are required")
+        self.bugs.append(Bug(str(title).strip(), severity, str(details).strip(), str(file)))
+        return f"recorded bug #{len(self.bugs)}"
 
     def _tool_finish(self, summary: str) -> str:
         raise Finished(str(summary))
