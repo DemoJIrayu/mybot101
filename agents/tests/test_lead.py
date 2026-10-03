@@ -283,3 +283,91 @@ def test_lead_flow_reports_live_status_for_the_office(tmp_path, origin, sandboxe
     assert events.index(("lead", "waiting")) < events.index(("dev", "working"))
     # Everyone is idle when the run is over.
     assert {a["state"] for a in board.read()["agents"].values()} == {"idle"}
+
+
+# ---- resume a stopped run -----------------------------------------------------
+
+
+def _stops_mid_task_1(role, box, task):
+    """Lead plans; Dev writes half of task 1, then runs out of steps."""
+    try:
+        if role == "lead":
+            box.call("submit_plan", {"tasks": PLAN})
+        box.call("write_file", {"path": "app/greet.py", "content": "def greet(n):  # WIP\n"})
+    except Finished as done:
+        return RunResult(True, done.summary, 1)
+    return RunResult(False, "Stopped after reaching the limit of 30 steps.", 30)
+
+
+def test_resume_continues_without_replanning(tmp_path, origin, sandboxes):
+    from agent_team.lead import CONTINUE_NOTE, load_resume
+
+    first, _ = _orchestrator(tmp_path, origin, sandboxes, _stops_mid_task_1)
+    out = first.run()
+    assert out.status == "dev_incomplete" and "--resume" in out.message
+    assert "# WIP" in (out.run_dir / "partial.patch").read_text()
+
+    goal, resume = load_resume(out.run_dir)
+    assert goal == "Greeting helpers" and resume.start_task == 1 and "# WIP" in resume.patch
+
+    script = Script(qa_bugs_per_round=(0,))
+    approvals = []
+    second, calls = _orchestrator(tmp_path, origin, sandboxes, script, resume=resume)
+    second.approve = lambda plan: approvals.append(plan) or True
+    result = second.run()
+
+    assert result.status == "pr_opened"
+    assert [r for r, _ in script.prompts] == ["dev", "dev", "qa"]  # no Lead planning
+    assert approvals == []  # the plan was already approved
+    assert script.prompts[0][1].endswith(CONTINUE_NOTE)  # Dev told to continue, not restart
+    assert CONTINUE_NOTE not in script.prompts[1][1]
+
+
+def test_resume_from_task_2_counts_task_1_as_done(tmp_path, origin, sandboxes):
+    from agent_team.lead import load_resume
+
+    first, _ = _orchestrator(tmp_path, origin, sandboxes, _stops_mid_task_1)
+    run_dir = first.run().run_dir
+    _, resume = load_resume(run_dir, from_task=2)
+    assert resume.start_task == 2 and resume.done[0][0] == "Add greet()"
+
+    script = Script(qa_bugs_per_round=(0,))
+    second, _ = _orchestrator(tmp_path, origin, sandboxes, script, resume=resume)
+    assert second.run().status == "pr_opened"
+    dev_prompt = script.prompts[0][1]
+    assert "task 2 of 2" in dev_prompt and "Earlier tasks, already done" in dev_prompt
+
+
+def test_resume_from_an_older_run_with_only_plan_md(tmp_path):
+    from agent_team.lead import load_resume
+
+    run_dir = tmp_path / "old-run"
+    run_dir.mkdir()
+    plan = [
+        PlanTask(
+            "Scaffold web/", "Create a Next.js app\nin web/ with TypeScript", "npm test passes"
+        ),
+        PlanTask("Add form", "page.tsx with a form", "Playwright test\ncovers the form"),
+    ]
+    (run_dir / "plan.md").write_text(format_plan("Build the calc page", plan) + "\n")
+    (run_dir / "partial.patch").write_text("diff --git a/x b/x\n")
+
+    goal, resume = load_resume(run_dir)
+    assert goal == "Build the calc page" and resume.plan == plan
+    assert resume.start_task == 1 and resume.patch.startswith("diff --git")
+    with pytest.raises(ValueError):
+        load_resume(run_dir, from_task=3)
+    with pytest.raises(FileNotFoundError):
+        load_resume(tmp_path / "missing")
+
+
+def test_dev_is_shown_working_in_the_office_during_its_tasks(tmp_path, origin, sandboxes):
+    from agent_team.status import StatusBoard
+
+    board = StatusBoard(tmp_path / "status.json")
+    script = Script(qa_bugs_per_round=(0,))
+    orch, _ = _orchestrator(tmp_path, origin, sandboxes, script, board=board)
+    orch.run()
+    events = [(e["role"], e["state"], e["task"]) for e in board.read()["events"]]
+    assert ("dev", "working", "งาน 1/2: Add greet()") in events
+    assert ("dev", "working", "งาน 2/2: Add shout()") in events

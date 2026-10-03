@@ -4,6 +4,7 @@
     python -m agent_team qa --pr 3
     python -m agent_team qa --pr 3 "Focus on input validation"
     python -m agent_team lead "Add a Next.js page in web/ that uses the calc API"
+    python -m agent_team lead --resume runs/20261003-173040-lead --max-steps 60
 
 Flow:
   1. A fresh clone of the repo (and, for QA, the pull request) inside the agent's sandbox.
@@ -26,7 +27,7 @@ from openai import OpenAI
 from agent_team import github, qa
 from agent_team.agent import SYSTEM_PROMPTS, Agent, RunResult
 from agent_team.config import REPO_ROOT, settings_for
-from agent_team.lead import Orchestrator
+from agent_team.lead import Orchestrator, ResumeState, load_resume
 from agent_team.sandbox import Sandbox
 from agent_team.status import StatusBoard
 from agent_team.tools import Toolbox, is_test_path
@@ -97,7 +98,12 @@ def make_agent(role: str, toolbox: Toolbox, max_steps: int | None = None) -> Age
     )
 
 
-def run_lead(goal: str, max_fix_rounds: int) -> int:
+def run_lead(
+    goal: str,
+    max_fix_rounds: int,
+    resume: ResumeState | None = None,
+    dev_max_steps: int | None = None,
+) -> int:
     roles = ("lead", "dev", "qa")
     sandboxes = {role: Sandbox(settings_for(role).sandbox) for role in roles}
     stopped = [sb.container for sb in sandboxes.values() if not sb.is_running()]
@@ -110,7 +116,8 @@ def run_lead(goal: str, max_fix_rounds: int) -> int:
         return 2
 
     def run_agent(role: str, toolbox: Toolbox, task: str) -> RunResult:
-        result = make_agent(role, toolbox).run(task)
+        steps = dev_max_steps if role == "dev" else None
+        result = make_agent(role, toolbox, steps).run(task)
         print(
             f"   {role}: finished={result.finished} · {result.steps} steps · {result.usage_line()}"
         )
@@ -152,6 +159,7 @@ def run_lead(goal: str, max_fix_rounds: int) -> int:
         runs_dir=RUNS_DIR,
         max_fix_rounds=max_fix_rounds,
         board=BOARD,
+        resume=resume,
     ).run()
     if outcome.run_dir is not None and outcome.run_dir.exists():
         print(f"Run files: {outcome.run_dir.relative_to(REPO_ROOT)}")
@@ -165,7 +173,15 @@ def main(argv: list[str] | None = None) -> int:
         "task", nargs="?", default="", help="what to do (dev), goal (lead), or extra focus (qa)"
     )
     parser.add_argument("--pr", type=int, help="pull request number for the QA agent to test")
-    parser.add_argument("--max-steps", type=int, help="override AGENT_MAX_STEPS")
+    parser.add_argument(
+        "--max-steps", type=int, help="override AGENT_MAX_STEPS (lead: applies to Dev)"
+    )
+    parser.add_argument(
+        "--resume",
+        metavar="RUN_DIR",
+        help="lead: continue a stopped run from its runs/<time>-lead folder (no re-planning)",
+    )
+    parser.add_argument("--from-task", type=int, help="lead --resume: task number to continue from")
     parser.add_argument(
         "--fix-rounds", type=int, default=2, help="lead: max Dev fix rounds after QA (default 2)"
     )
@@ -180,10 +196,20 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("the qa agent needs --pr NUMBER")
     if args.role != "qa" and args.pr:
         parser.error("--pr is only used by the qa agent")
+    if (args.resume or args.from_task) and args.role != "lead":
+        parser.error("--resume and --from-task are only used by the lead")
+    if args.from_task and not args.resume:
+        parser.error("--from-task needs --resume RUN_DIR")
+    if args.role == "lead" and args.resume:
+        try:
+            goal, resume = load_resume(Path(args.resume), args.from_task)
+        except (OSError, ValueError, KeyError) as exc:
+            parser.error(f"can't resume from {args.resume}: {exc}")
+        return run_lead(goal, args.fix_rounds, resume, args.max_steps)
     if args.role != "qa" and not args.task.strip():
         parser.error(f"the {args.role} agent needs a task")
     if args.role == "lead":
-        return run_lead(args.task, args.fix_rounds)
+        return run_lead(args.task, args.fix_rounds, None, args.max_steps)
 
     settings = settings_for(args.role)
     sandbox = Sandbox(settings.sandbox)
