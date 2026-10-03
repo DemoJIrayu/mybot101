@@ -159,6 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         toolbox,
         SYSTEM_PROMPTS[args.role],
         max_steps=args.max_steps or settings.max_steps,
+        max_tokens=settings.max_tokens,
     )
     print(f"▶ {args.role} agent working (model alias: {settings.model}) ...\n")
     result = agent.run(task)

@@ -41,6 +41,8 @@ How to work:
    - Next.js pages and UI: Playwright end-to-end tests in e2e/*.spec.ts.
      Install exactly `@playwright/test@1.55.0` (matches the browsers in this sandbox)
      and use a playwright.config.ts with a webServer that builds and starts the app.
+   Aim for the 10-25 most valuable tests, not exhaustive coverage. Skip tests of plain
+   language behaviour (e.g. how Python's + works) and tests that grep source code.
 4. A test that exposes a REAL bug stays in, marked as an expected failure so the
    suite still passes and the bug is tracked:
    - Python: @pytest.mark.xfail(strict=True, reason="BUG: <short description>")
@@ -60,6 +62,24 @@ Rules:
 }
 
 NUDGE = "Continue by calling a tool. If the task is complete, call finish with a summary."
+
+# Every step re-sends the whole conversation, so old tool outputs (file contents, test
+# logs) dominate token use. Keep the most recent ones in full and shrink older ones.
+KEEP_RECENT_TOOL_OUTPUTS = 6
+TRIMMED_HEAD = 400
+
+
+def compact_history(messages: list[dict[str, Any]], keep_recent: int = KEEP_RECENT_TOOL_OUTPUTS):
+    """Shorten tool outputs older than the last `keep_recent`, in place."""
+    tool_idx = [i for i, m in enumerate(messages) if m.get("role") == "tool"]
+    for i in tool_idx[:-keep_recent] if keep_recent else tool_idx:
+        content = messages[i]["content"]
+        if len(content) > TRIMMED_HEAD + 100 and not content.endswith("[trimmed]"):
+            cut = len(content) - TRIMMED_HEAD
+            messages[i]["content"] = (
+                f"{content[:TRIMMED_HEAD]}\n... [{cut} older characters removed to save "
+                "tokens; re-run the tool if you need them again] [trimmed]"
+            )
 
 
 @dataclass
@@ -81,6 +101,7 @@ class Agent:
         system_prompt: str,
         *,
         max_steps: int = 30,
+        max_tokens: int = 0,
         log: Callable[[str], None] = print,
     ):
         self.client = client
@@ -88,6 +109,7 @@ class Agent:
         self.toolbox = toolbox
         self.system_prompt = system_prompt
         self.max_steps = max_steps
+        self.max_tokens = max_tokens  # 0 = no cap
         self.log = log
 
     def run(self, task: str) -> RunResult:
@@ -99,6 +121,14 @@ class Agent:
 
         for step in range(1, self.max_steps + 1):
             result.steps = step
+            used = result.prompt_tokens + result.completion_tokens
+            if self.max_tokens and used >= self.max_tokens:
+                result.summary = (
+                    f"Stopped: used {used} tokens, over this run's budget of {self.max_tokens}."
+                )
+                self.log(f"⚠️  {result.summary}")
+                return result
+            compact_history(messages)
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
