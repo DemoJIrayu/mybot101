@@ -65,15 +65,17 @@ def build_qa_task(pr: PullRequest, stat: str, diff: str, extra: str = "") -> str
             + f"\n... [diff truncated; {len(diff) - MAX_DIFF_CHARS} more characters. "
             "Use read_file to see the rest.]"
         )
-    where = (
-        f"This PR is already merged; the checkout is the current {pr.base} branch."
-        if pr.merged
-        else "The checkout is the PR's head commit."
-    )
+    if not pr.number:
+        where = "The checkout contains the team's change, committed on top of main."
+    elif pr.merged:
+        where = f"This PR is already merged; the checkout is the current {pr.base} branch."
+    else:
+        where = "The checkout is the PR's head commit."
+    subject = f"pull request #{pr.number}" if pr.number else "this change"
     parts = [
-        f"Test pull request #{pr.number}: {pr.title}",
+        f"Test {subject}: {pr.title}",
         where,
-        f"PR description:\n{pr.body.strip() or '(none)'}",
+        f"Description:\n{pr.body.strip() or '(none)'}",
         f"Files changed:\n{stat.strip()}",
         f"Diff:\n```diff\n{diff}\n```",
     ]
@@ -87,7 +89,7 @@ _ICON = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "⚪"}
 
 def build_report(pr: PullRequest, result: RunResult, bugs: list[Bug], tests_stat: str) -> str:
     ordered = sorted(bugs, key=lambda b: SEVERITIES.index(b.severity))
-    lines = [f"## 🧪 QA report for #{pr.number}: {pr.title}", ""]
+    lines = [f"## 🧪 QA report for {pr.ref}: {pr.title}", ""]
     if not result.finished:
         lines += [f"> ⚠️ The QA agent did not finish: {result.summary}", ""]
 
@@ -114,8 +116,5 @@ def build_report(pr: PullRequest, result: RunResult, bugs: list[Bug], tests_stat
     lines += ["", "### Tests added", ""]
     lines.append(f"```\n{tests_stat.strip()}\n```" if tests_stat.strip() else "None.")
     lines += ["", "### QA summary", "", result.summary.strip() or "(none)", ""]
-    lines.append(
-        f"<sub>QA agent · {result.steps} steps · tokens in/out "
-        f"{result.prompt_tokens}/{result.completion_tokens}</sub>"
-    )
+    lines.append(f"<sub>QA agent · {result.steps} steps · {result.usage_line()}</sub>")
     return "\n".join(lines) + "\n"

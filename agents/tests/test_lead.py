@@ -1,0 +1,238 @@
+"""End-to-end tests of the Lead flow with real git repos and scripted (fake) agents."""
+
+import os
+import subprocess
+
+import pytest
+
+from agent_team.agent import RunResult
+from agent_team.lead import Orchestrator, dev_task_prompt, fix_prompt, format_plan
+from agent_team.sandbox import Sandbox
+from agent_team.tools import Bug, Finished, PlanTask, Toolbox, ToolError, parse_plan
+
+GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@t",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@t",
+}
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                   env={**os.environ, **GIT_ENV})  # fmt: skip
+
+
+class LocalRunner:
+    """Runs `docker exec ...` commands locally, mapping /workspace to a temp folder."""
+
+    def __init__(self, root):
+        self.root = str(root)
+
+    def __call__(self, cmd, **kwargs):
+        if cmd[:2] == ["docker", "inspect"]:
+            return subprocess.CompletedProcess(cmd, 0, "true\n", "")
+        i = cmd.index("-w")
+        workdir, args = cmd[i + 1], cmd[i + 5 :]  # skip: -w DIR CONTAINER timeout N
+
+        def m(s):
+            return s.replace("/workspace", self.root)
+
+        os.makedirs(self.root, exist_ok=True)
+        cwd = m(workdir) if os.path.isdir(m(workdir)) else self.root
+        return subprocess.run(
+            [m(a) for a in args], cwd=cwd, input=kwargs.get("input"),
+            capture_output=True, text=True, env={**os.environ, **GIT_ENV},
+        )  # fmt: skip
+
+
+@pytest.fixture
+def origin(tmp_path):
+    work = tmp_path / "seed"
+    work.mkdir()
+    _git(work, "init", "-q", "-b", "main")
+    (work / "README.md").write_text("demo\n")
+    _git(work, "add", ".")
+    _git(work, "commit", "-qm", "init")
+    bare = tmp_path / "origin.git"
+    _git(tmp_path, "clone", "-q", "--bare", str(work), str(bare))
+    return str(bare)
+
+
+@pytest.fixture
+def sandboxes(tmp_path):
+    return {r: Sandbox(f"sbx-{r}", runner=LocalRunner(tmp_path / r)) for r in ("lead", "dev", "qa")}
+
+
+PLAN = [
+    {"title": "Add greet()", "description": "app/greet.py", "acceptance": "tests pass"},
+    {"title": "Add shout()", "description": "app/greet.py", "acceptance": "tests pass"},
+]
+
+
+class Script:
+    """Scripted agents. Records each task prompt so tests can inspect them."""
+
+    def __init__(self, qa_bugs_per_round=(1, 0), dev_extra_files=(), qa_extra_files=()):
+        self.prompts = []
+        self.qa_round = 0
+        self.qa_bugs_per_round = list(qa_bugs_per_round)
+        self.dev_extra_files = dev_extra_files
+        self.qa_extra_files = qa_extra_files
+
+    def __call__(self, role, box: Toolbox, task: str) -> RunResult:
+        self.prompts.append((role, task))
+        try:
+            if role == "lead":
+                box.call("list_files", {"path": "."})
+                assert box.call("write_file", {"path": "x.py", "content": "x"}).startswith("ERROR")
+                box.call("submit_plan", {"tasks": PLAN})
+            elif role == "dev" and task.startswith("QA tested"):
+                box.call("write_file", {"path": "app/greet.py", "content": "def greet(n):\n"
+                                        "    return f'hi {n}'\n\ndef shout(n):\n"
+                                        "    return greet(n).upper()\n"})  # fmt: skip
+                box.call("finish", {"summary": "fixed empty-name bug"})
+            elif role == "dev":
+                n = sum(1 for r, _ in self.prompts if r == "dev")
+                body = "def greet(n):\n    return 'hi ' + n\n"
+                if n >= 2:
+                    body += "\ndef shout(n):\n    return greet(n).upper()\n"
+                box.call("write_file", {"path": "app/greet.py", "content": body})
+                for path in self.dev_extra_files:
+                    box.call("write_file", {"path": path, "content": "x\n"})
+                box.call("finish", {"summary": f"task {n} done"})
+            elif role == "qa":
+                self.qa_round += 1
+                test_file = f"app/tests/test_qa_{self.qa_round}.py"
+                box.call("write_file", {"path": test_file, "content": "def test_ok(): pass\n"})
+                for path in self.qa_extra_files:
+                    # Simulates a sneaky write through the shell, bypassing write_file.
+                    box.sandbox.write_file(f"/workspace/repo/{path}", "hacked\n")
+                for i in range(self.qa_bugs_per_round[self.qa_round - 1]):
+                    box.call("report_bug", {"title": f"bug {i}", "severity": "high",
+                                            "details": "greet(None) crashes"})  # fmt: skip
+                box.call("finish", {"summary": f"qa round {self.qa_round}"})
+        except Finished as done:
+            return RunResult(True, done.summary, 3)
+        return RunResult(False, "gave up", 30)
+
+
+def _orchestrator(tmp_path, origin, sandboxes, script, approve=True, **kw):
+    calls = {}
+
+    def open_pr(title, body, patch_file):
+        calls["pr"] = (title, body, patch_file.read_text())
+        return "https://github.com/o/r/pull/9"
+
+    orch = Orchestrator(
+        "Greeting helpers",
+        sandboxes=sandboxes,
+        repo_url=origin,
+        run_agent=script,
+        summarize=lambda prompt: (
+            calls.setdefault("summary_prompt", prompt)
+            and "## Summary\n- x\nVerdict: ready for review"
+        ),
+        approve=lambda plan: calls.setdefault("plan", plan) is not None and approve,
+        open_pr=open_pr,
+        runs_dir=tmp_path / "runs",
+        log=lambda _: None,
+        **kw,
+    )
+    return orch, calls
+
+
+def test_full_flow_plan_dev_qa_fix_retest_pr(tmp_path, origin, sandboxes):
+    script = Script(qa_bugs_per_round=(1, 0))
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, script)
+    out = orch.run()
+
+    assert out.status == "pr_opened" and out.pr_url.endswith("/9") and not out.open_bugs
+    assert [r for r, _ in script.prompts] == ["lead", "dev", "dev", "qa", "dev", "qa"]
+    assert "1. Add greet()" in calls["plan"]
+
+    # Task 2 sees task 1's summary; QA round 2 is told what was reported before.
+    assert "task 1 done" in script.prompts[2][1]
+    assert "re-test round 1" in script.prompts[5][1] and "bug 0" in script.prompts[5][1]
+
+    title, body, patch = calls["pr"]
+    assert title == "agent(lead): Greeting helpers"
+    assert "Verdict: ready for review" in body and "Plan approved by a human" in body
+    # The final patch has Dev's fixed code AND both rounds of QA tests.
+    assert "return greet(n).upper()" in patch and "f'hi {n}'" in patch
+    assert "app/tests/test_qa_1.py" in patch and "app/tests/test_qa_2.py" in patch
+    assert (out.run_dir / "plan.md").exists() and (out.run_dir / "qa-round-2.md").exists()
+
+
+def test_rejected_plan_changes_nothing(tmp_path, origin, sandboxes):
+    script = Script()
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, script, approve=False)
+    out = orch.run()
+    assert out.status == "aborted" and "pr" not in calls
+    assert [r for r, _ in script.prompts] == ["lead"]
+
+
+def test_bugs_left_after_last_round_still_open_pr_flagged(tmp_path, origin, sandboxes):
+    script = Script(qa_bugs_per_round=(1, 1))
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, script, max_fix_rounds=1)
+    out = orch.run()
+    assert out.status == "pr_opened" and len(out.open_bugs) == 1
+    assert "Bugs still open: 1" in calls["summary_prompt"]
+
+
+def test_protected_paths_block_the_pr(tmp_path, origin, sandboxes):
+    script = Script(qa_bugs_per_round=(0,), dev_extra_files=(".github/workflows/x.yml",))
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, script)
+    out = orch.run()
+    assert out.status == "blocked" and "pr" not in calls
+    assert ".github/workflows/x.yml" in out.message
+
+
+def test_qa_changes_to_app_code_are_discarded(tmp_path, origin, sandboxes):
+    script = Script(qa_bugs_per_round=(0,), qa_extra_files=("app/greet.py",))
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, script)
+    out = orch.run()
+    assert out.status == "pr_opened"
+    patch = calls["pr"][2]
+    assert "hacked" not in patch and "test_qa_1.py" not in patch
+
+
+def test_unfinished_dev_task_stops_without_pr(tmp_path, origin, sandboxes):
+    def run_agent(role, box, task):
+        if role == "lead":
+            try:
+                box.call("submit_plan", {"tasks": PLAN})
+            except Finished as done:
+                return RunResult(True, done.summary, 1)
+        return RunResult(False, "Stopped after reaching the limit of 30 steps.", 30)
+
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, run_agent)
+    out = orch.run()
+    assert out.status == "dev_incomplete" and "pr" not in calls
+    assert (out.run_dir / "partial.patch").exists()
+
+
+# ---- plan parsing and prompts -------------------------------------------------
+
+
+def test_parse_plan_validates():
+    assert parse_plan(PLAN)[0] == PlanTask("Add greet()", "app/greet.py", "tests pass")
+    for bad in ([], [{}] * 6, "x", [{"title": "t", "description": "", "acceptance": "a"}]):
+        with pytest.raises(ToolError):
+            parse_plan(bad)
+
+
+def test_submit_plan_only_for_planner():
+    box = Toolbox(Sandbox("s", runner=LocalRunner("/tmp")))
+    assert box.call("submit_plan", {"tasks": PLAN}).startswith("ERROR: unknown tool")
+    planner = Toolbox(Sandbox("s", runner=LocalRunner("/tmp")), planning=True)
+    names = [s["function"]["name"] for s in planner.specs]
+    assert "submit_plan" in names and "finish" not in names
+
+
+def test_prompts():
+    plan = parse_plan(PLAN)
+    text = dev_task_prompt("Goal", plan, 1, [])
+    assert "task 1 of 2" in text and "do NOT do these now): Add shout()" in text
+    assert "Remove the xfail" in fix_prompt("Goal", [Bug("b", "high", "d", "f.py")])
+    assert format_plan("G", plan).startswith("Goal: G\n\n1. Add greet()")

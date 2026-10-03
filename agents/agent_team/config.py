@@ -11,10 +11,10 @@ ENV_FILE = REPO_ROOT / "infra" / ".env"
 
 # Which LiteLLM alias and sandbox each role uses.
 ROLES = {
-    # max_tokens: prompt + completion tokens per run (all steps), a cost safety net.
-    "lead": {"model": "lead", "key_var": "LEAD_AGENT_KEY", "max_steps": 30, "max_tokens": 300_000},
-    "dev": {"model": "worker", "key_var": "DEV_AGENT_KEY", "max_steps": 30, "max_tokens": 400_000},
-    "qa": {"model": "worker", "key_var": "QA_AGENT_KEY", "max_steps": 40, "max_tokens": 500_000},
+    # max_tokens: new (uncached) input + output tokens per run, a cost safety net.
+    "lead": {"model": "lead", "key_var": "LEAD_AGENT_KEY", "max_steps": 30, "max_tokens": 200_000},
+    "dev": {"model": "worker", "key_var": "DEV_AGENT_KEY", "max_steps": 30, "max_tokens": 300_000},
+    "qa": {"model": "worker", "key_var": "QA_AGENT_KEY", "max_steps": 40, "max_tokens": 400_000},
 }
 
 

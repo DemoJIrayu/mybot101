@@ -24,7 +24,7 @@ GitHub Actions: gitleaks · Semgrep · CodeQL · Trivy · dependency review · t
 ## Planned layout
 
 ```
-agents/      Python — Dev + QA agents (Lead next)              (steps 2 & 4, done)
+agents/      Python — Lead, Dev and QA agents                  (steps 2, 4, 5 done)
 web/         Next.js — dashboard to watch and approve agents (later)
 infra/       WSL, Docker, LiteLLM, sandbox image              (step 1, done)
 .github/     DevSecOps pipeline                               (step 3, done)
@@ -126,6 +126,31 @@ Guardrails: QA may only change test files (tests/, test_*.py, *.test.ts, *.spec.
 playwright config, package.json). This is checked on the final diff, so it can't be
 bypassed through shell commands, and `--allow-protected` doesn't override it.
 
+## Step 5 — the Lead agent
+
+Give it one bigger goal; it runs the whole team and opens one PR.
+
+```bash
+cd ~/mybot101/infra && docker compose --profile sandbox up -d   # all 3 sandboxes
+cd ../agents && . .venv/bin/activate
+python -m agent_team lead "Add a CLI to apps/calc: 'python -m calc add 2 3' prints 5"
+python -m agent_team lead "..." --fix-rounds 1      # fewer QA→Dev fix loops
+```
+
+1. **Plan:** the Lead (DeepSeek V4-Pro) looks around the repo in `sandbox-lead` and
+   proposes 1–5 small tasks with acceptance criteria. It can't write files.
+2. **You approve the plan once** (`y`). Saying no stops everything; nothing is changed.
+3. **Dev** does the tasks one by one in `sandbox-dev` (one shared workspace).
+4. **QA** gets the combined change as a patch in `sandbox-qa`, adds tests and reports
+   bugs. Its tests are copied back into Dev's workspace.
+5. If QA found bugs, **Dev fixes them** and QA re-tests (up to `--fix-rounds`, default 2).
+6. The Lead writes the PR description (summary, verification, open issues, verdict) and
+   **opens one PR** with your `gh` login. You review and merge it; the pipeline checks it.
+
+Stops without a PR when: the plan is rejected, a Dev task doesn't finish (partial patch
+saved), or the change touches `.github/`, `infra/` or `agents/`. Everything from a run
+(plan, QA reports, final patch, PR body) is saved in `runs/<time>-lead/`.
+
 ## Step 3 — CI pipeline
 
 `.github/workflows/devsecops.yml` runs on every push, PR and weekly.
@@ -151,9 +176,11 @@ Agents will work on branches and open PRs; they never push to `main`.
 
 ## Budget rules
 
-- **Per run:** each agent stops at a token budget (Dev 400k, QA 500k, Lead 300k;
-  override with `AGENT_MAX_TOKENS`). Older tool outputs are shortened in the
-  conversation (last 6 kept in full), because every step re-sends the whole history.
+- **Per run:** each agent stops at a budget of *new* tokens: uncached input plus output
+  (Dev 300k, QA 400k, Lead 200k; override with `AGENT_MAX_TOKENS`). Cached input is ~50×
+  cheaper on DeepSeek, so it isn't counted. When a conversation passes ~30k tokens,
+  older tool outputs are shortened in one go (last 6 kept), so the cached start of the
+  conversation stays stable between compactions.
 - **Check spend per agent:**
   `source infra/.env && curl -s localhost:4000/key/info -H "Authorization: Bearer $QA_AGENT_KEY" | jq .info.spend`
 
