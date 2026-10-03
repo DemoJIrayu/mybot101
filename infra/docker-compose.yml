@@ -19,7 +19,7 @@ services:
       POSTGRES_DB: agent
     volumes:
       - pgdata:/var/lib/postgresql/data
-    networks: [agent-net]
+    networks: [core-net]
     mem_limit: 512m
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U agent"]
@@ -45,23 +45,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    networks: [agent-net]
+    networks: [core-net]
     mem_limit: 1g
 
   # Agent sandboxes: where agents run code, tests and Playwright.
-  # They never get your provider keys — only their own LiteLLM key.
+  # They hold NO keys at all: the agent loop runs on your machine and only uses
+  # `docker exec` to act in here. They also can't reach LiteLLM or Postgres
+  # (separate network), only the internet.
   sandbox-lead: &sandbox
     profiles: ["sandbox"]
     build: ./sandbox
     image: agent-team/sandbox:latest
     restart: "no"
     environment:
-      OPENAI_BASE_URL: http://litellm:4000/v1
-      OPENAI_API_KEY: ${LEAD_AGENT_KEY:-changeme}
       AGENT_ROLE: lead
     volumes:
       - ws-lead:/workspace
-    networks: [agent-net]
+    networks: [sandbox-net]
     mem_limit: 768m
     cpus: 2
     pids_limit: 512
@@ -72,8 +72,6 @@ services:
   sandbox-dev:
     <<: *sandbox
     environment:
-      OPENAI_BASE_URL: http://litellm:4000/v1
-      OPENAI_API_KEY: ${DEV_AGENT_KEY:-changeme}
       AGENT_ROLE: dev
     volumes:
       - ws-dev:/workspace
@@ -82,8 +80,6 @@ services:
   sandbox-qa:
     <<: *sandbox
     environment:
-      OPENAI_BASE_URL: http://litellm:4000/v1
-      OPENAI_API_KEY: ${QA_AGENT_KEY:-changeme}
       AGENT_ROLE: qa
     volumes:
       - ws-qa:/workspace
@@ -91,7 +87,9 @@ services:
     shm_size: 512m
 
 networks:
-  agent-net:
+  core-net:            # LiteLLM + Postgres
+    driver: bridge
+  sandbox-net:         # agent sandboxes: internet only
     driver: bridge
     ipam:
       config:

@@ -169,7 +169,8 @@ jobs:
               if [ -f requirements.txt ]; then uv pip install -q -r requirements.txt; fi
               uv pip install -q ruff pytest pip-audit
               ruff check .
-              pip-audit --strict || echo "::warning::pip-audit found issues in $dir"
+              uv pip freeze --exclude-editable > /tmp/reqs.txt   # audit deps, not the project itself
+              pip-audit --strict --disable-pip --no-deps -r /tmp/reqs.txt || echo "::warning::pip-audit found issues in $dir"
               pytest -q || [ $? -eq 5 ]   # exit 5 = no tests collected yet
             )
             echo "::endgroup::"

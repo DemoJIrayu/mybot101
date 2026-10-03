@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Stop agent sandboxes from reaching your home/office LAN (router, NAS, other PCs).
-# They can still reach the internet (package registries, GitHub) and the LiteLLM proxy.
+# They can still reach the internet (package registries, GitHub).
 # Run inside WSL after `docker compose up`:  sudo bash infra/wsl/lan-block.sh
 set -euo pipefail
 
-SANDBOX_NET="172.30.0.0/24"   # must match the subnet of 'agent-net' in docker-compose.yml
+SANDBOX_NET="172.30.0.0/24"   # must match the subnet of 'sandbox-net' in docker-compose.yml
 
 # Start clean so the script is safe to re-run.
 iptables -F DOCKER-USER
-# Allow traffic inside the agent network (sandbox -> litellm) and replies.
+# Allow traffic inside the agent network and replies.
 iptables -A DOCKER-USER -s "$SANDBOX_NET" -d "$SANDBOX_NET" -j RETURN
 iptables -A DOCKER-USER -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 # Block private ranges.
