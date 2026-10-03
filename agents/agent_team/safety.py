@@ -13,7 +13,10 @@ Runner = Callable[[list[str]], subprocess.CompletedProcess]
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(args, capture_output=True, text=True, check=False)
+    # Safe: an argument list (no shell); repo names come from the checked allowlist.
+    return subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
+        args, capture_output=True, text=True, check=False
+    )
 
 
 def preflight(target: Target, branch: str, run: Runner = _run) -> list[str]:

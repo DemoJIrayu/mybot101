@@ -1,5 +1,10 @@
 # Agent sandbox: Python + Node/TypeScript + headless Playwright.
 # Covers the project stack: Python, Node/TypeScript, Next.js.
+# Pinned to an exact release tag. To pin the digest too (stronger), on your machine run:
+#   docker pull mcr.microsoft.com/playwright:v1.55.0-noble
+#   docker inspect --format '{{index .RepoDigests 0}}' mcr.microsoft.com/playwright:v1.55.0-noble
+# and replace the FROM line with the printed name@sha256:... value.
+# nosemgrep: dockerfile-source-not-pinned
 FROM mcr.microsoft.com/playwright:v1.55.0-noble
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -10,6 +15,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 python3-pip python3-venv git curl jq ripgrep \
+ && apt-get clean \
  && rm -rf /var/lib/apt/lists/* \
  && pip3 install --no-cache-dir uv \
  && corepack enable \

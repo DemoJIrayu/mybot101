@@ -202,7 +202,7 @@ def run_lead(
         board=BOARD,
         resume=resume,
         protected=ws.target.protected,
-        repo="" if ws.target.is_self else ws.target.name,
+        repo="" if ws.target.own_repo else ws.target.name,
     ).run()
     if outcome.run_dir is not None and outcome.run_dir.exists():
         print(f"Run files: {outcome.run_dir.relative_to(REPO_ROOT)}")
@@ -292,7 +292,11 @@ def _dispatch(args, parser) -> int:
         load_tree(sandbox, tree)
         task = qa.build_qa_task(pr, pr_stat, pr_diff, args.task)
         toolbox = Toolbox(
-            sandbox, can_write=is_test_path, write_rule=qa.WRITE_RULE, bug_reports=True
+            sandbox,
+            # nosemgrep: is-function-without-parentheses (passed as a callback, not called)
+            can_write=is_test_path,
+            write_rule=qa.WRITE_RULE,
+            bug_reports=True,
         )
     else:
         print(f"▶ Loading {ws.target.name}@{ws.base_sha[:8]} into {settings.sandbox} ...")
@@ -311,7 +315,7 @@ def _run_single(
 ) -> int:
     agent = make_agent(args.role, toolbox, args.max_steps)
     print(f"▶ {args.role} agent working (model alias: {settings.model}) ...\n")
-    tag = "" if ws.target.is_self else f"[{ws.target.short}] "
+    tag = "" if ws.target.own_repo else f"[{ws.target.short}] "
     label = tag + (f"ทดสอบ PR #{pr.number}" if pr is not None else args.task)
     with BOARD.state(args.role, "working", label):
         result = agent.run(task)

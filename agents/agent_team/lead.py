@@ -302,6 +302,7 @@ class Orchestrator:
         commit_all(qa_sb, "team change under test")
         change = PullRequest(0, self.goal, plan_text, "OPEN", "", "main", False, "")
         task = build_qa_task(change, stat, patch, retest_note(round_no, earlier))
+        # nosemgrep: is-function-without-parentheses (passed as a callback, not called)
         box = Toolbox(qa_sb, can_write=is_test_path, write_rule=WRITE_RULE, bug_reports=True)
         label = f"{self.tag}ทดสอบรอบ {round_no + 1}: {self.goal}"
         with self.board.state("qa", "working", label):

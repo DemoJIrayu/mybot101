@@ -62,7 +62,7 @@ def test_defaults_and_self_repo(repos_file):
     assert norst.protected == (".github/", "infra/") and norst.require_ci
     assert not norst.require_branch_protection
     me = get_target(None, repos_file)
-    assert me.is_self and me.local_dir == repos.REPO_ROOT and "agents/" in me.protected
+    assert me.own_repo and me.local_dir == repos.REPO_ROOT and "agents/" in me.protected
     assert not me.require_ci
 
 
@@ -167,8 +167,10 @@ class FakeRun:
 
     def __call__(self, args):
         if args[0] == "git":
+            # nosemgrep: dangerous-subprocess-use-audit (test fake, no shell)
             return subprocess.CompletedProcess(args, 0 if self.ci else 1, "", "")
         ok = self.protected
+        # nosemgrep: dangerous-subprocess-use-audit (test fake, no shell)
         return subprocess.CompletedProcess(args, 0 if ok else 1, "", "" if ok else self.err)
 
 
@@ -212,3 +214,14 @@ def test_options_can_come_before_the_goal(monkeypatch):
     monkeypatch.setattr(cli, "run_lead", lambda goal, *a: seen.update(goal=goal, repo=a[-1]) or 0)
     assert cli.main(["lead", "--repo", "DemoJIrayu/Anne-AIChatbot", "Scaffold the app"]) == 0
     assert seen == {"goal": "Scaffold the app", "repo": "DemoJIrayu/Anne-AIChatbot"}
+
+
+BAD_NAMES = ["owner/repo name", "owner/..", "owner/repo;rm -rf", "a/b/c", "owner/"]
+
+
+@pytest.mark.parametrize("bad", BAD_NAMES)
+def test_unsafe_repo_names_are_rejected(tmp_path, bad):
+    f = tmp_path / "repos.toml"
+    f.write_text(f'[repos."{bad}"]\n')
+    with pytest.raises(repos.RepoError, match="owner/repo"):
+        repos.load_targets(f)

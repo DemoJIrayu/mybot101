@@ -31,6 +31,7 @@ class LocalRunner:
 
     def __call__(self, cmd, **kwargs):
         if cmd[:2] == ["docker", "inspect"]:
+            # nosemgrep: dangerous-subprocess-use-audit (test fake, no shell)
             return subprocess.CompletedProcess(cmd, 0, "true\n", "")
         i = cmd.index("-w")
         workdir, args = cmd[i + 1], cmd[i + 5 :]  # skip: -w DIR CONTAINER timeout N
@@ -40,6 +41,7 @@ class LocalRunner:
 
         os.makedirs(self.root, exist_ok=True)
         cwd = m(workdir) if os.path.isdir(m(workdir)) else self.root
+        # nosemgrep: dangerous-subprocess-use-audit (test fake, no shell)
         return subprocess.run(
             [m(a) for a in args], cwd=cwd, input=kwargs.get("input"),
             capture_output=True, text=kwargs.get("text", True), env={**os.environ, **GIT_ENV},

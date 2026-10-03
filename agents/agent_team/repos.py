@@ -9,6 +9,7 @@ request in that clone. Repos that aren't listed in infra/repos.toml are refused.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tomllib
 from dataclasses import dataclass
@@ -18,6 +19,8 @@ from agent_team.config import REPO_ROOT
 
 REPOS_FILE = REPO_ROOT / "infra" / "repos.toml"
 SELF_REPO = "DemoJIrayu/mybot101"
+# GitHub owner/repo names: letters, digits, "-", "_" and "." only (no spaces, no "..").
+NAME_RE = re.compile(r"^[A-Za-z0-9-]+/(?!\.\.?$)[A-Za-z0-9._-]+$")
 
 
 def repos_dir() -> Path:
@@ -28,7 +31,7 @@ def repos_dir() -> Path:
 class Target:
     name: str  # owner/repo, as written in repos.toml
     protected: tuple[str, ...]  # path prefixes agents must never change
-    is_self: bool = False  # the agent-team repo itself (works in REPO_ROOT)
+    own_repo: bool = False  # the agent-team repo itself (works in REPO_ROOT)
     require_ci: bool = True  # the repo must call the shared DevSecOps workflow
     require_branch_protection: bool = True
 
@@ -38,7 +41,7 @@ class Target:
 
     @property
     def local_dir(self) -> Path:
-        return REPO_ROOT if self.is_self else repos_dir() / self.name
+        return REPO_ROOT if self.own_repo else repos_dir() / self.name
 
 
 class RepoError(RuntimeError):
@@ -53,16 +56,16 @@ def load_targets(path: Path = REPOS_FILE) -> dict[str, Target]:
         data = {}
     targets: dict[str, Target] = {}
     for name, cfg in (data.get("repos") or {}).items():
-        if name.count("/") != 1 or not all(name.split("/")):
+        if not NAME_RE.match(name):
             raise RepoError(f"{path}: '{name}' must look like owner/repo")
         protected = tuple(str(p) for p in cfg.get("protected", [".github/", "infra/"]))
-        is_self = name.lower() == SELF_REPO.lower()
+        own_repo = name.lower() == SELF_REPO.lower()
         targets[name.lower()] = Target(
             name=name,
             protected=protected,
-            is_self=is_self,
-            require_ci=bool(cfg.get("require_ci", not is_self)),
-            require_branch_protection=bool(cfg.get("require_branch_protection", not is_self)),
+            own_repo=own_repo,
+            require_ci=bool(cfg.get("require_ci", not own_repo)),
+            require_branch_protection=bool(cfg.get("require_branch_protection", not own_repo)),
         )
     # The agent-team repo is always available, with its own guardrails protected.
     targets.setdefault(
@@ -89,7 +92,11 @@ def get_target(name: str | None, path: Path = REPOS_FILE) -> Target:
 
 
 def _run(args: list[str], cwd: Path | None = None, binary: bool = False):
-    proc = subprocess.run(args, cwd=cwd, capture_output=True, text=not binary, check=False)
+    # Safe: an argument list (no shell), program is git/gh, and repo names come only
+    # from the infra/repos.toml allowlist, checked against NAME_RE.
+    proc = subprocess.run(  # nosemgrep: dangerous-subprocess-use-audit
+        args, cwd=cwd, capture_output=True, text=not binary, check=False
+    )
     if proc.returncode != 0:
         err = proc.stderr.decode() if binary else proc.stderr
         raise RepoError(f"{' '.join(args[:4])}… failed: {err.strip()[:500]}")

@@ -33,6 +33,7 @@ class FakeRunner:
 
     def __call__(self, cmd, **kwargs):
         self.calls.append(cmd)
+        # nosemgrep: dangerous-subprocess-use-audit (test fake, no shell)
         return subprocess.CompletedProcess(cmd, self.returncode, self.stdout, "")
 
 
@@ -77,6 +78,7 @@ def test_app_files_are_not_allowed(path):
 
 def test_qa_toolbox_refuses_app_code_but_writes_tests():
     runner = FakeRunner()
+    # nosemgrep: is-function-without-parentheses (passed as a callback, not called)
     box = Toolbox(Sandbox("sbx", runner=runner), can_write=is_test_path, write_rule="tests only")
     refused = box.call("write_file", {"path": "apps/calc/calc/core.py", "content": "x"})
     assert refused.startswith("ERROR: not allowed") and "tests only" in refused
