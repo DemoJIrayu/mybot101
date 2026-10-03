@@ -22,6 +22,11 @@ class PullRequest:
     url: str
 
     @property
+    def ref(self) -> str:
+        """Short reference for reports: '#3', or 'this change' for unsubmitted work."""
+        return f"#{self.number}" if self.number else "this change"
+
+    @property
     def merged(self) -> bool:
         return self.state == "MERGED"
 

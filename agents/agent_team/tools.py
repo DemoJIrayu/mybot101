@@ -133,6 +133,59 @@ REPORT_BUG_SPEC = _fn(
 )
 
 
+MAX_PLAN_TASKS = 5
+
+
+@dataclass(frozen=True)
+class PlanTask:
+    title: str
+    description: str
+    acceptance: str
+
+
+SUBMIT_PLAN_SPEC = _fn(
+    "submit_plan",
+    f"Submit the plan: 1 to {MAX_PLAN_TASKS} small tasks, in the order they must be done. "
+    "This ends your planning.",
+    {
+        "tasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short imperative title"},
+                    "description": {
+                        "type": "string",
+                        "description": "What to build or change, and where (paths)",
+                    },
+                    "acceptance": {
+                        "type": "string",
+                        "description": "How we know it's done: tests, behaviour, commands",
+                    },
+                },
+                "required": ["title", "description", "acceptance"],
+            },
+        }
+    },
+    ["tasks"],
+)
+
+
+def parse_plan(tasks: Any) -> list[PlanTask]:
+    if not isinstance(tasks, list) or not 1 <= len(tasks) <= MAX_PLAN_TASKS:
+        raise ToolError(f"tasks must be a list of 1 to {MAX_PLAN_TASKS} items")
+    plan = []
+    for i, task in enumerate(tasks, 1):
+        if not isinstance(task, dict):
+            raise ToolError(f"task {i} must be an object")
+        fields = {k: str(task.get(k, "")).strip() for k in ("title", "description", "acceptance")}
+        missing = [k for k, v in fields.items() if not v]
+        if missing:
+            raise ToolError(f"task {i} is missing: {', '.join(missing)}")
+        plan.append(PlanTask(**fields))
+    return plan
+
+
 class Toolbox:
     def __init__(
         self,
@@ -141,21 +194,31 @@ class Toolbox:
         can_write: Callable[[str], bool] | None = None,
         write_rule: str = "",
         bug_reports: bool = False,
+        planning: bool = False,
     ):
         self.sandbox = sandbox
         self.can_write = can_write
         self.write_rule = write_rule
         self.bug_reports = bug_reports
         self.bugs: list[Bug] = []
+        self.planning = planning
+        self.plan: list[PlanTask] = []
 
     @property
     def specs(self) -> list[dict[str, Any]]:
-        return TOOL_SPECS + ([REPORT_BUG_SPEC] if self.bug_reports else [])
+        extra = [REPORT_BUG_SPEC] if self.bug_reports else []
+        if self.planning:
+            # The planner submits a plan instead of calling finish.
+            base = [s for s in TOOL_SPECS if s["function"]["name"] != "finish"]
+            return base + [SUBMIT_PLAN_SPEC] + extra
+        return TOOL_SPECS + extra
 
     def call(self, name: str, args: dict[str, Any]) -> str:
         """Run a tool. Returns text for the model; raises Finished on `finish`."""
         handler = getattr(self, f"_tool_{name}", None)
         if name == "report_bug" and not self.bug_reports:
+            handler = None
+        if name == "submit_plan" and not self.planning:
             handler = None
         if handler is None:
             return f"ERROR: unknown tool {name!r}"
@@ -206,6 +269,10 @@ class Toolbox:
             raise ToolError("title and details are required")
         self.bugs.append(Bug(str(title).strip(), severity, str(details).strip(), str(file)))
         return f"recorded bug #{len(self.bugs)}"
+
+    def _tool_submit_plan(self, tasks: Any) -> str:
+        self.plan = parse_plan(tasks)
+        raise Finished(f"plan with {len(self.plan)} task(s) submitted")
 
     def _tool_finish(self, summary: str) -> str:
         raise Finished(str(summary))

@@ -99,13 +99,13 @@ def test_old_tool_outputs_are_trimmed_but_recent_kept():
     for i in range(10):
         msgs.append({"role": "assistant", "content": ""})
         msgs.append({"role": "tool", "tool_call_id": str(i), "content": f"{i}" + "x" * 5000})
-    compact_history(msgs, keep_recent=3)
+    assert compact_history(msgs, keep_recent=3, threshold=1000)
     tools = [m for m in msgs if m["role"] == "tool"]
     assert all(m["content"].endswith("[trimmed]") for m in tools[:7])
     assert all(len(m["content"]) == 5001 for m in tools[7:])
     assert tools[0]["content"].startswith("0xxx") and tools[0]["tool_call_id"] == "0"
     before = tools[0]["content"]
-    compact_history(msgs, keep_recent=3)  # idempotent
+    assert not compact_history(msgs, keep_recent=3, threshold=1000)  # idempotent
     assert tools[0]["content"] == before
 
 
@@ -116,3 +116,39 @@ def test_agent_stops_when_token_budget_is_spent():
     assert not result.finished and result.steps == 4
     assert "budget of 40" in result.summary
     assert len(client.requests) == 3
+
+
+def test_small_history_is_left_alone_to_keep_cache_prefix_stable():
+    from agent_team.agent import compact_history
+
+    msgs = [{"role": "tool", "tool_call_id": str(i), "content": "x" * 5000} for i in range(10)]
+    snapshot = copy.deepcopy(msgs)
+    assert not compact_history(msgs, keep_recent=3, threshold=60_000)
+    assert msgs == snapshot
+
+
+def test_cached_tokens_do_not_count_against_budget():
+    def cached_response(cached):
+        r = _response(content="hmm")
+        r.usage = NS(
+            prompt_tokens=1000,
+            completion_tokens=10,
+            prompt_tokens_details=NS(cached_tokens=cached),
+        )
+        return r
+
+    client = FakeClient([cached_response(990) for _ in range(5)])
+    agent = Agent(client, "worker", FakeToolbox(), "sys", max_steps=3, max_tokens=100)
+    agent.log = lambda _: None
+    result = agent.run("t")
+    # 3 steps x (10 uncached + 10 out) = 60 new tokens: under the 100 budget.
+    assert result.steps == 3 and "limit of 3 steps" in result.summary
+    assert result.cached_tokens == 2970 and result.new_tokens == 60
+    assert "cached 2970, new 60" in result.usage_line()
+
+
+def test_deepseek_cache_field_is_understood():
+    from agent_team.agent import _cached_tokens
+
+    assert _cached_tokens(NS(prompt_cache_hit_tokens=42)) == 42
+    assert _cached_tokens(NS(prompt_tokens_details=NS(cached_tokens=None))) == 0
