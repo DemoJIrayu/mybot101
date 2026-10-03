@@ -185,6 +185,7 @@ class Agent:
         max_steps: int = 30,
         max_tokens: int = 0,
         log: Callable[[str], None] = print,
+        on_step: Callable[[int], None] | None = None,
     ):
         self.client = client
         self.model = model
@@ -192,6 +193,7 @@ class Agent:
         self.system_prompt = system_prompt
         self.max_steps = max_steps
         self.max_tokens = max_tokens  # 0 = no cap
+        self.on_step = on_step
         self.log = log
 
     def run(self, task: str) -> RunResult:
@@ -203,6 +205,8 @@ class Agent:
 
         for step in range(1, self.max_steps + 1):
             result.steps = step
+            if self.on_step is not None:
+                self.on_step(step)
             used = result.new_tokens
             if self.max_tokens and used >= self.max_tokens:
                 result.summary = (
