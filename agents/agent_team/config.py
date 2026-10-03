@@ -11,9 +11,9 @@ ENV_FILE = REPO_ROOT / "infra" / ".env"
 
 # Which LiteLLM alias and sandbox each role uses.
 ROLES = {
-    "lead": {"model": "lead", "key_var": "LEAD_AGENT_KEY"},
-    "dev": {"model": "worker", "key_var": "DEV_AGENT_KEY"},
-    "qa": {"model": "worker", "key_var": "QA_AGENT_KEY"},
+    "lead": {"model": "lead", "key_var": "LEAD_AGENT_KEY", "max_steps": 30},
+    "dev": {"model": "worker", "key_var": "DEV_AGENT_KEY", "max_steps": 30},
+    "qa": {"model": "worker", "key_var": "QA_AGENT_KEY", "max_steps": 40},
 }
 
 
@@ -55,5 +55,5 @@ def settings_for(role: str) -> Settings:
         base_url=os.environ.get("LITELLM_URL", "http://127.0.0.1:4000/v1"),
         sandbox=os.environ.get(f"{role.upper()}_SANDBOX", f"agent-team-sandbox-{role}-1"),
         repo_url=os.environ.get("AGENT_REPO_URL", "https://github.com/DemoJIrayu/mybot101"),
-        max_steps=int(os.environ.get("AGENT_MAX_STEPS", "30")),
+        max_steps=int(os.environ.get("AGENT_MAX_STEPS", spec["max_steps"])),
     )

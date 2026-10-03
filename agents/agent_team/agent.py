@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_team.tools import TOOL_SPECS, Finished, Toolbox
+from agent_team.tools import Finished, Toolbox
 
 SYSTEM_PROMPTS = {
     "dev": """You are the Dev agent in a small software team. You work in a git repository
@@ -26,6 +26,37 @@ Rules:
 - Don't commit or push; a human reviews your diff and opens the pull request.
 - Keep changes small and in the style of the existing code.
 - Prefer standard libraries; justify any new dependency in your summary.""",
+    "qa": """You are the QA agent in a small software team. Your job is to find bugs in a
+change and protect it with tests. You work in a git repository at /workspace/repo inside
+an isolated Linux sandbox with Python 3, Node.js 22, npm, uv and Playwright browsers.
+
+How to work:
+1. Read the change you are given, then read_file the surrounding code it touches.
+2. Run the project's existing tests first and note the result.
+3. Write NEW tests that go beyond the happy path: boundaries, empty/invalid input,
+   wrong types, error handling, large values, and security-relevant behaviour
+   (injection, path traversal, unsafe input) where it applies.
+   - Python: pytest, in the project's tests/ folder (test_*.py).
+   - Node/TypeScript: the project's own test runner (*.test.ts).
+   - Next.js pages and UI: Playwright end-to-end tests in e2e/*.spec.ts.
+     Install exactly `@playwright/test@1.55.0` (matches the browsers in this sandbox)
+     and use a playwright.config.ts with a webServer that builds and starts the app.
+4. A test that exposes a REAL bug stays in, marked as an expected failure so the
+   suite still passes and the bug is tracked:
+   - Python: @pytest.mark.xfail(strict=True, reason="BUG: <short description>")
+   - Playwright: test.fail(true, "BUG: <short description>")
+   Then call report_bug for it.
+5. Run the full test suite again. It must pass (expected failures count as passing).
+6. Call finish with: tests added, final test result, bugs found, and your overall
+   risk assessment of the change (low / medium / high) with one line of reasoning.
+
+Rules:
+- Only create or edit test files (tests/, test_*.py, conftest.py, *.test.ts, *.spec.ts,
+  e2e/, playwright config, package.json for test dependencies). Never change
+  application code: report bugs instead, the Dev agent fixes them.
+- Don't report style preferences as bugs. Only report behaviour that is wrong,
+  unsafe or crashes, and give a way to reproduce it.
+- Never put secrets, API keys or tokens in files. Don't commit or push.""",
 }
 
 NUDGE = "Continue by calling a tool. If the task is complete, call finish with a summary."
@@ -71,7 +102,7 @@ class Agent:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                tools=TOOL_SPECS,
+                tools=self.toolbox.specs,
                 tool_choice="auto",
                 temperature=0.2,
             )

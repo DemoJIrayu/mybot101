@@ -30,6 +30,8 @@ class FakeClient:
 
 
 class FakeToolbox:
+    specs = []
+
     def __init__(self):
         self.calls = []
 
