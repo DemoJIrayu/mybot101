@@ -22,10 +22,21 @@ if [ ! -d "$DIR/.git" ]; then
 fi
 cd "$DIR"
 git fetch --quiet origin
-BASE=$(gh repo view "$REPO" --json defaultBranchRef -q .defaultBranchRef.name)
-START=$(git rev-parse --abbrev-ref HEAD)
-BRANCH="onboard/agent-team-$(date +%Y%m%d-%H%M%S)"
-git switch --quiet -c "$BRANCH" "origin/$BASE"
+BASE=$(gh repo view "$REPO" --json defaultBranchRef -q .defaultBranchRef.name 2>/dev/null || true)
+BASE=${BASE:-main}
+START=$(git symbolic-ref --quiet --short HEAD || echo "$BASE")
+
+# An empty repo has no branch yet, so there is nothing to open a pull request against:
+# the pipeline becomes its first commit on $BASE, and you protect the branch right after.
+EMPTY=false
+if ! git rev-parse --verify --quiet "origin/$BASE" >/dev/null; then
+  EMPTY=true
+  BRANCH="$BASE"
+  git switch --quiet --orphan "$BASE" 2>/dev/null || git checkout --quiet --orphan "$BASE"
+else
+  BRANCH="onboard/agent-team-$(date +%Y%m%d-%H%M%S)"
+  git switch --quiet -c "$BRANCH" "origin/$BASE"
+fi
 
 WORKFLOW="$HERE/onboarding/workflows/$SHORT.yml"
 [ -f "$WORKFLOW" ] || WORKFLOW="$HERE/onboarding/workflows/default.yml"
@@ -40,14 +51,26 @@ fi
 
 git add .github/workflows/devsecops.yml .github/dependabot.yml .npmrc
 git commit --quiet -m "Add shared DevSecOps pipeline for the agent team"
+
+FLAG=""
+grep -q 'code_scanning: false' "$WORKFLOW" && FLAG=" --no-code-scanning"
+
+if [ "$EMPTY" = true ]; then
+  git push --quiet -u origin "$BASE"
+  echo "✓ $REPO was empty: the pipeline is now the first commit on $BASE."
+  echo
+  echo "Next:"
+  echo "  1. Protect $BASE now:          bash .github/scripts/protect-main.sh $REPO$FLAG"
+  echo "  2. Check the first run:      https://github.com/$REPO/actions"
+  echo "Then the agents can work on it:  python -m agent_team lead --repo $REPO \"...\""
+  exit 0
+fi
+
 git push --quiet -u origin "$BRANCH"
 URL=$(gh pr create --repo "$REPO" --base "$BASE" --head "$BRANCH" \
   --title "Add shared DevSecOps pipeline (agent team onboarding)" \
   --body "Adds .github/workflows/devsecops.yml, which calls the shared pipeline in DemoJIrayu/mybot101 (secrets, Semgrep, Trivy, CodeQL, tests with test databases), plus Dependabot and the npm 7-day release-age rule.")
 git switch --quiet "$START"
-
-FLAG=""
-grep -q 'code_scanning: false' "$WORKFLOW" && FLAG=" --no-code-scanning"
 echo "✓ Pull request: $URL"
 echo
 echo "Next:"
