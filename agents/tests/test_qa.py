@@ -5,7 +5,7 @@ import pytest
 from agent_team.agent import RunResult
 from agent_team.cli import disallowed_changes
 from agent_team.github import parse_pr
-from agent_team.qa import build_qa_task, build_report, prepare_pr_workspace
+from agent_team.qa import build_qa_task, build_report
 from agent_team.sandbox import Sandbox
 from agent_team.tools import Bug, Toolbox, is_test_path
 
@@ -139,29 +139,6 @@ def test_report_bug_unavailable_to_dev():
 )
 def test_follow_up_pr_target(overrides, target):
     assert _pr(**overrides).test_branch_target() == target
-
-
-def test_merged_pr_checks_out_base_and_diffs_pr():
-    runner = FakeRunner(stdout="diff output")
-    stat, diff = prepare_pr_workspace(Sandbox("sbx", runner=runner), "URL", _pr(state="MERGED"))
-    cmds = [c[c.index("timeout") + 2 :] for c in runner.calls]
-    fetch = next(c for c in cmds if c[:2] == ["git", "fetch"])
-    assert "+refs/pull/3/head:refs/heads/pr-3" in fetch
-    assert ["git", "checkout", "--quiet", "--detach", "origin/main"] in cmds
-    assert ["git", "diff", "origin/main...pr-3"] in cmds
-    assert stat == diff == "diff output"
-
-
-def test_open_pr_checks_out_pr_head():
-    runner = FakeRunner()
-    prepare_pr_workspace(Sandbox("sbx", runner=runner), "URL", _pr())
-    cmds = [c[c.index("timeout") + 2 :] for c in runner.calls]
-    assert ["git", "checkout", "--quiet", "--detach", "pr-3"] in cmds
-
-
-def test_workspace_failure_is_raised():
-    with pytest.raises(RuntimeError, match="failed in the sandbox"):
-        prepare_pr_workspace(Sandbox("sbx", runner=FakeRunner(returncode=1)), "URL", _pr())
 
 
 def test_qa_task_includes_pr_and_truncates_huge_diff():

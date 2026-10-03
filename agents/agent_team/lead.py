@@ -24,11 +24,12 @@ from agent_team.sandbox import Sandbox
 from agent_team.status import NullBoard, StatusBoard
 from agent_team.tools import Bug, PlanTask, Toolbox, is_test_path
 from agent_team.workspace import (
+    PROTECTED_PREFIXES,
     apply_patch,
     collect_diff,
     commit_all,
     disallowed_changes,
-    prepare_workspace,
+    load_tree,
 )
 
 RunAgent = Callable[[str, Toolbox, str], RunResult]
@@ -170,6 +171,7 @@ class ResumeState:
     done: list[tuple[str, str]] = field(default_factory=list)  # (title, Dev's summary)
     patch: str = ""  # Dev's unfinished work
     from_dir: str = ""
+    repo: str = ""  # owner/repo the run was for ("" = the agent-team repo itself)
 
 
 def parse_plan_md(text: str) -> tuple[str, list[PlanTask]]:
@@ -201,9 +203,10 @@ def load_resume(run_dir: Path, from_task: int | None = None) -> tuple[str, Resum
         plan = [PlanTask(**t) for t in state["plan"]]
         next_task = int(state.get("next_task", 1))
         done = [(d["title"], d["summary"]) for d in state.get("done", [])]
+        repo = state.get("repo", "")
     elif (run_dir / "plan.md").is_file():
         goal, plan = parse_plan_md((run_dir / "plan.md").read_text(encoding="utf-8"))
-        next_task, done = 1, []
+        next_task, done, repo = 1, [], ""
     else:
         raise FileNotFoundError(f"no state.json or plan.md in {run_dir}")
 
@@ -215,7 +218,7 @@ def load_resume(run_dir: Path, from_task: int | None = None) -> tuple[str, Resum
     done = [(t.title, known.get(t.title, "Done in an earlier run.")) for t in plan[: start - 1]]
     patch_file = run_dir / "partial.patch"
     patch = patch_file.read_text(encoding="utf-8") if patch_file.is_file() else ""
-    return goal, ResumeState(plan, start, done, patch, str(run_dir))
+    return goal, ResumeState(plan, start, done, patch, str(run_dir), repo)
 
 
 class Orchestrator:
@@ -224,7 +227,7 @@ class Orchestrator:
         goal: str,
         *,
         sandboxes: dict[str, Sandbox],
-        repo_url: str,
+        tree: bytes,
         run_agent: RunAgent,
         summarize: Callable[[str], str],
         approve: Callable[[str], bool],
@@ -234,10 +237,15 @@ class Orchestrator:
         log: Callable[[str], None] = print,
         board: StatusBoard | None = None,
         resume: ResumeState | None = None,
+        protected: tuple[str, ...] = PROTECTED_PREFIXES,
+        repo: str = "",
     ):
         self.goal = goal.strip()
         self.sb = sandboxes
-        self.repo_url = repo_url
+        self.tree = tree  # the code to work on, as a tar archive (no .git, no credentials)
+        self.protected = protected
+        self.repo = repo
+        self.tag = f"[{repo.split('/')[-1]}] " if repo else ""
         self.run_agent = run_agent
         self.summarize = summarize
         self.approve = approve
@@ -246,7 +254,8 @@ class Orchestrator:
         self.log = log
         self.board = board or NullBoard()
         self.resume = resume
-        self.run_dir = runs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-lead"
+        suffix = f"-{repo.split('/')[-1]}" if repo else ""
+        self.run_dir = runs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-lead{suffix}"
 
     def _save(self, name: str, text: str) -> Path:
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -259,6 +268,7 @@ class Orchestrator:
             "goal": self.goal,
             "plan": [t.__dict__ for t in plan],
             "next_task": next_task,
+            "repo": self.repo,
             "done": [{"title": t.title, "summary": r.summary} for t, r in done],
         }
         self._save("state.json", json.dumps(state, ensure_ascii=False, indent=1))
@@ -271,14 +281,14 @@ class Orchestrator:
 
     def plan(self) -> tuple[list[PlanTask], RunResult]:
         self.log("▶ Lead is planning ...")
-        prepare_workspace(self.sb["lead"], self.repo_url)
+        load_tree(self.sb["lead"], self.tree)
         box = Toolbox(
             self.sb["lead"],
             can_write=lambda _path: False,
             write_rule="The Lead only plans; Dev writes the code.",
             planning=True,
         )
-        with self.board.state("lead", "working", f"วางแผน: {self.goal}"):
+        with self.board.state("lead", "working", f"{self.tag}วางแผน: {self.goal}"):
             result = self.run_agent("lead", box, f"Goal: {self.goal}")
         return box.plan, result
 
@@ -287,17 +297,17 @@ class Orchestrator:
     ) -> tuple[Toolbox, RunResult, str, str]:
         """QA tests the dev patch in its own sandbox. Returns (toolbox, result, stat, patch)."""
         qa_sb = self.sb["qa"]
-        prepare_workspace(qa_sb, self.repo_url)
+        load_tree(qa_sb, self.tree)
         apply_patch(qa_sb, patch)
         commit_all(qa_sb, "team change under test")
         change = PullRequest(0, self.goal, plan_text, "OPEN", "", "main", False, "")
         task = build_qa_task(change, stat, patch, retest_note(round_no, earlier))
         box = Toolbox(qa_sb, can_write=is_test_path, write_rule=WRITE_RULE, bug_reports=True)
-        label = f"ทดสอบรอบ {round_no + 1}: {self.goal}"
+        label = f"{self.tag}ทดสอบรอบ {round_no + 1}: {self.goal}"
         with self.board.state("qa", "working", label):
             result = self.run_agent("qa", box, task)
         names, qa_stat, qa_patch = collect_diff(qa_sb)
-        blocked = disallowed_changes("qa", names, allow_protected=False)
+        blocked = disallowed_changes("qa", names, False, self.protected)
         if blocked:
             self.log(
                 "⛔ QA changed non-test files; its changes are discarded: " + ", ".join(blocked)
@@ -349,7 +359,7 @@ class Orchestrator:
         self._save_state(plan, start, done)
 
         dev_sb = self.sb["dev"]
-        prepare_workspace(dev_sb, self.repo_url)
+        load_tree(dev_sb, self.tree)
         if resume is not None:
             apply_patch(dev_sb, resume.patch)
         for i in range(start, len(plan) + 1):
@@ -358,7 +368,7 @@ class Orchestrator:
             prompt = dev_task_prompt(self.goal, plan, i, done)
             if resume is not None and i == start and resume.patch.strip():
                 prompt += CONTINUE_NOTE
-            with self.board.state("dev", "working", f"งาน {i}/{len(plan)}: {task.title}"):
+            with self.board.state("dev", "working", f"{self.tag}งาน {i}/{len(plan)}: {task.title}"):
                 result = self.run_agent("dev", Toolbox(dev_sb), prompt)
             if not result.finished:
                 _, _, patch = collect_diff(dev_sb)
@@ -402,13 +412,13 @@ class Orchestrator:
             self._meeting(f"QA ส่งบั๊ก {len(must_fix)} ข้อให้ Dev")
             self.board.set("lead", "idle")
             self.board.set("qa", "idle")
-            with self.board.state("dev", "working", f"แก้บั๊กรอบ {round_no + 1}"):
+            with self.board.state("dev", "working", f"{self.tag}แก้บั๊กรอบ {round_no + 1}"):
                 fix = self.run_agent("dev", Toolbox(dev_sb), fix_prompt(self.goal, must_fix))
             done.append((PlanTask(f"Fix QA round {round_no + 1}", "", ""), fix))
             earlier = must_fix
 
         names, stat, patch = collect_diff(dev_sb)
-        blocked = disallowed_changes("dev", names, allow_protected=False)
+        blocked = disallowed_changes("dev", names, False, self.protected)
         patch_file = self._save("final.patch", patch)
         if blocked:
             return self._outcome(

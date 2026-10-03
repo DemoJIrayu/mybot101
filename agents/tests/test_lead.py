@@ -42,21 +42,23 @@ class LocalRunner:
         cwd = m(workdir) if os.path.isdir(m(workdir)) else self.root
         return subprocess.run(
             [m(a) for a in args], cwd=cwd, input=kwargs.get("input"),
-            capture_output=True, text=True, env={**os.environ, **GIT_ENV},
+            capture_output=True, text=kwargs.get("text", True), env={**os.environ, **GIT_ENV},
         )  # fmt: skip
 
 
 @pytest.fixture
 def origin(tmp_path):
+    """The starting code, as the tar archive your machine hands to the sandboxes."""
     work = tmp_path / "seed"
     work.mkdir()
     _git(work, "init", "-q", "-b", "main")
     (work / "README.md").write_text("demo\n")
+    (work / ".gitignore").write_text("node_modules/\n")
     _git(work, "add", ".")
     _git(work, "commit", "-qm", "init")
-    bare = tmp_path / "origin.git"
-    _git(tmp_path, "clone", "-q", "--bare", str(work), str(bare))
-    return str(bare)
+    return subprocess.run(
+        ["git", "-C", str(work), "archive", "--format=tar", "HEAD"], capture_output=True, check=True
+    ).stdout
 
 
 @pytest.fixture
@@ -130,7 +132,7 @@ def _orchestrator(tmp_path, origin, sandboxes, script, approve=True, **kw):
     orch = Orchestrator(
         "Greeting helpers",
         sandboxes=sandboxes,
-        repo_url=origin,
+        tree=origin,
         run_agent=script,
         summarize=lambda prompt: (
             calls.setdefault("summary_prompt", prompt)
@@ -371,3 +373,46 @@ def test_dev_is_shown_working_in_the_office_during_its_tasks(tmp_path, origin, s
     events = [(e["role"], e["state"], e["task"]) for e in board.read()["events"]]
     assert ("dev", "working", "งาน 1/2: Add greet()") in events
     assert ("dev", "working", "งาน 2/2: Add shout()") in events
+
+
+def test_sandbox_gets_files_but_no_remote_or_credentials(tmp_path, origin):
+    from agent_team.workspace import load_tree
+
+    sb = Sandbox("sbx", runner=LocalRunner(tmp_path / "w"))
+    load_tree(sb, origin)
+    repo = tmp_path / "w" / "repo"
+    assert (repo / "README.md").read_text() == "demo\n"
+    remotes = subprocess.run(["git", "-C", str(repo), "remote"], capture_output=True, text=True)
+    assert remotes.stdout.strip() == ""  # nowhere to push to
+    status = subprocess.run(
+        ["git", "-C", str(repo), "status", "--porcelain"], capture_output=True, text=True
+    )
+    assert status.stdout == ""  # clean starting point, so agents' work is a plain diff
+
+
+def test_repo_name_shows_in_office_status_and_run_folder(tmp_path, origin, sandboxes):
+    from agent_team.status import StatusBoard
+
+    board = StatusBoard(tmp_path / "status.json")
+    script = Script(qa_bugs_per_round=(0,))
+    orch, _ = _orchestrator(
+        tmp_path, origin, sandboxes, script, board=board, repo="DemoJIrayu/Anne-AIChatbot"
+    )
+    out = orch.run()
+    assert out.run_dir.name.endswith("-lead-Anne-AIChatbot")
+    tasks = [e["task"] for e in board.read()["events"] if e["role"] == "dev"]
+    assert any(t.startswith("[Anne-AIChatbot] งาน 1/2") for t in tasks)
+    import json
+
+    assert (
+        json.loads((out.run_dir / "state.json").read_text())["repo"] == "DemoJIrayu/Anne-AIChatbot"
+    )
+
+
+def test_each_repo_uses_its_own_protected_paths(tmp_path, origin, sandboxes):
+    script = Script(qa_bugs_per_round=(0,), dev_extra_files=("deploy/prod.yml",))
+    orch, calls = _orchestrator(
+        tmp_path, origin, sandboxes, script, protected=(".github/", "infra/", "deploy/")
+    )
+    out = orch.run()
+    assert out.status == "blocked" and "deploy/prod.yml" in out.message

@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule: { interval: weekly }
+  - package-ecosystem: npm
+    # Root, each top-level folder (backend/, frontend/ ...) and apps/*, packages/*.
+    directories: ["/", "/*", "/apps/*", "/packages/*"]
+    schedule: { interval: weekly }
+    # Same rule as .npmrc: let new releases age a week before proposing them.
+    cooldown:
+      default-days: 7
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]

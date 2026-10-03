@@ -1,0 +1,35 @@
+# DevSecOps pipeline: the shared one from the agent-team repo (DemoJIrayu/mybot101).
+# Added by infra/onboard-repo.sh. Agents can't change files under .github/.
+name: devsecops
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 2 * * 1"      # weekly full scan, Monday 09:17 Bangkok time
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  devsecops:
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+      pull-requests: write
+    # Tip: pin to a commit SHA instead of @main for stricter supply-chain control.
+    uses: DemoJIrayu/mybot101/.github/workflows/devsecops-reusable.yml@main
+    with:
+      codeql_languages: '["javascript-typescript"]'
+      # Test databases for integration tests (URLs arrive as env vars):
+      postgres: true    # DATABASE_URL  - shops, settings, plans, staff roles
+      mysql: false      # MYSQL_URL     - set true if you choose MySQL instead/as well
+      mongodb: true     # MONGODB_URI   - chat logs (LINE, Facebook, Lazada payloads)
+      redis: true       # REDIS_URL     - cache + pub/sub for live admin chat

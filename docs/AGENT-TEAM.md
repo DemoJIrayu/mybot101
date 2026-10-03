@@ -182,9 +182,50 @@ walking to the matching zone, lights and sky follow Bangkok time, the camera fol
 bot that's working, and the theme icon on the card switches system / light / dark.
 Try it without agents: http://127.0.0.1:3300/?demo=1. Details: `office/README.md`.
 
+## Step 10 — working on other repositories
+
+The agents can work on any repo listed in `infra/repos.toml` (today: mybot101,
+Anne-AIChatbot, YourNorst). They still never hold a GitHub token:
+
+1. Your machine clones the repo with your `gh` login into `~/agent-repos/<owner>/<repo>`
+   (works for private repos) and gives the sandboxes a plain copy of the files
+   (a tar archive: no `.git`, no remote, no credentials).
+2. Before any work, a **safety check** refuses repos that don't call the shared
+   DevSecOps pipeline or whose default branch isn't protected.
+3. Each repo has its own protected paths (`.github/`, `infra/`, `deploy/` by default).
+4. PRs are opened in that repo, branched from exactly the commit the agents worked on.
+
+**Onboard a repo once** (you run this; agents may never change `.github/`):
+
+```bash
+bash infra/onboard-repo.sh DemoJIrayu/Anne-AIChatbot     # opens a PR adding the pipeline
+gh pr merge --repo DemoJIrayu/Anne-AIChatbot --squash --delete-branch <branch>
+bash .github/scripts/protect-main.sh DemoJIrayu/Anne-AIChatbot
+```
+
+For **private repos without GitHub Advanced Security** (YourNorst's template sets
+`code_scanning: false`): CodeQL and dependency review are off, `npm audit` blocks instead,
+and protect it with `--no-code-scanning`. Branch protection on private repos needs GitHub
+Pro; without it, set `require_branch_protection = false` for that repo in `repos.toml`.
+
+**Use it:**
+
+```bash
+python -m agent_team lead --repo DemoJIrayu/Anne-AIChatbot "Scaffold backend/ (Node + TypeScript) and frontend/ (Next.js)"
+python -m agent_team qa   --repo DemoJIrayu/YourNorst --pr 12
+python -m agent_team lead --resume runs/<time>-lead-Anne-AIChatbot     # repo remembered
+```
+
+**Test databases** for integration tests: `cd infra && docker compose --profile databases up -d`
+starts Postgres, MySQL, MongoDB and Redis on the sandbox network only (in-memory, no
+ports on your machine; ~1.3 GB RAM, stop them when idle). Sandboxes and CI both get
+`DATABASE_URL`, `MYSQL_URL`, `MONGODB_URI`, `REDIS_URL`; CI starts only the ones each
+repo's workflow asks for, with random passwords.
+
 ## Step 3 — CI pipeline
 
-`.github/workflows/devsecops.yml` runs on every push, PR and weekly.
+`.github/workflows/devsecops.yml` runs on every push, PR and weekly. Its jobs live in
+`devsecops-reusable.yml`, which the other repos call too.
 
 | Check | Scope | Blocks merge? |
 |---|---|---|

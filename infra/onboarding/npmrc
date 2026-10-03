@@ -1,0 +1,3 @@
+# Supply-chain safety: never resolve package versions published less than 7 days ago
+# (new releases can be malicious or broken). Needs npm 11.10+.
+min-release-age=7

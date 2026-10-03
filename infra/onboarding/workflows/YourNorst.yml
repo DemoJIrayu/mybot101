@@ -1,0 +1,34 @@
+# DevSecOps pipeline: the shared one from the agent-team repo (DemoJIrayu/mybot101).
+# Added by infra/onboard-repo.sh. Agents can't change files under .github/.
+name: devsecops
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 2 * * 1"      # weekly full scan, Monday 09:17 Bangkok time
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  devsecops:
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+      pull-requests: write
+    # Tip: pin to a commit SHA instead of @main for stricter supply-chain control.
+    uses: DemoJIrayu/mybot101/.github/workflows/devsecops-reusable.yml@main
+    with:
+      # Private repo: CodeQL, Security-tab uploads and dependency review need GitHub
+      # Advanced Security. Without it they're off, and `npm audit` becomes a blocking
+      # check instead. Set to true if this repo has Advanced Security.
+      code_scanning: false
+      postgres: true    # DATABASE_URL

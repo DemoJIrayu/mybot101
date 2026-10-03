@@ -18,6 +18,8 @@ RUN apt-get update \
 # Non-root user; the 'pwuser' account already exists in the Playwright image.
 RUN mkdir -p /workspace && chown pwuser:pwuser /workspace
 USER pwuser
+# Never install npm package versions published less than 7 days ago (supply chain).
+RUN npm config set min-release-age 7
 WORKDIR /workspace
 
 # Keep the container alive; the orchestrator (step 2) runs commands via `docker exec`.

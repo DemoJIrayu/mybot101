@@ -7,8 +7,6 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from agent_team.config import REPO_ROOT
-
 
 @dataclass(frozen=True)
 class PullRequest:
@@ -45,9 +43,7 @@ class PullRequest:
 
 
 def _gh(*args: str) -> str:
-    return subprocess.run(
-        ["gh", *args], cwd=REPO_ROOT, check=True, capture_output=True, text=True
-    ).stdout.strip()
+    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout.strip()
 
 
 def parse_pr(data: dict) -> PullRequest:
@@ -63,14 +59,17 @@ def parse_pr(data: dict) -> PullRequest:
     )
 
 
-def get_pr(number: int) -> PullRequest:
+def get_pr(number: int, repo: str) -> PullRequest:
     fields = "number,title,body,state,headRefName,baseRefName,isCrossRepository,url"
-    return parse_pr(json.loads(_gh("pr", "view", str(number), "--json", fields)))
+    return parse_pr(json.loads(_gh("pr", "view", str(number), "--repo", repo, "--json", fields)))
 
 
-def comment_on_pr(number: int, body_file: Path) -> None:
-    _gh("pr", "comment", str(number), "--body-file", str(body_file))
+def comment_on_pr(number: int, body_file: Path, repo: str) -> None:
+    _gh("pr", "comment", str(number), "--repo", repo, "--body-file", str(body_file))
 
 
-def create_pr(base: str, head: str, title: str, body: str) -> str:
-    return _gh("pr", "create", "--base", base, "--head", head, "--title", title, "--body", body)
+def create_pr(repo: str, base: str, head: str, title: str, body: str) -> str:
+    return _gh(
+        "pr", "create", "--repo", repo, "--base", base, "--head", head,
+        "--title", title, "--body", body,
+    )  # fmt: skip
