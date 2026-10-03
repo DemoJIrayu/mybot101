@@ -19,6 +19,7 @@ from agent_team.agent import RunResult
 from agent_team.github import PullRequest
 from agent_team.qa import WRITE_RULE, build_qa_task, build_report
 from agent_team.sandbox import Sandbox
+from agent_team.status import NullBoard, StatusBoard
 from agent_team.tools import Bug, PlanTask, Toolbox, is_test_path
 from agent_team.workspace import (
     apply_patch,
@@ -164,6 +165,7 @@ class Orchestrator:
         runs_dir: Path,
         max_fix_rounds: int = 2,
         log: Callable[[str], None] = print,
+        board: StatusBoard | None = None,
     ):
         self.goal = goal.strip()
         self.sb = sandboxes
@@ -174,6 +176,7 @@ class Orchestrator:
         self.open_pr = open_pr
         self.max_fix_rounds = max(0, max_fix_rounds)
         self.log = log
+        self.board = board or NullBoard()
         self.run_dir = runs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-lead"
 
     def _save(self, name: str, text: str) -> Path:
@@ -197,7 +200,8 @@ class Orchestrator:
             write_rule="The Lead only plans; Dev writes the code.",
             planning=True,
         )
-        result = self.run_agent("lead", box, f"Goal: {self.goal}")
+        with self.board.state("lead", "working", f"วางแผน: {self.goal}"):
+            result = self.run_agent("lead", box, f"Goal: {self.goal}")
         return box.plan, result
 
     def run_qa(
@@ -211,7 +215,9 @@ class Orchestrator:
         change = PullRequest(0, self.goal, plan_text, "OPEN", "", "main", False, "")
         task = build_qa_task(change, stat, patch, retest_note(round_no, earlier))
         box = Toolbox(qa_sb, can_write=is_test_path, write_rule=WRITE_RULE, bug_reports=True)
-        result = self.run_agent("qa", box, task)
+        label = f"ทดสอบรอบ {round_no + 1}: {self.goal}"
+        with self.board.state("qa", "working", label):
+            result = self.run_agent("qa", box, task)
         names, qa_stat, qa_patch = collect_diff(qa_sb)
         blocked = disallowed_changes("qa", names, allow_protected=False)
         if blocked:
@@ -224,12 +230,25 @@ class Orchestrator:
     # -- main flow ------------------------------------------------------------
 
     def run(self) -> LeadOutcome:
+        try:
+            return self._run()
+        finally:
+            self.board.all_idle()
+
+    def _meeting(self, topic: str) -> None:
+        for role in ("lead", "dev", "qa"):
+            self.board.set(role, "meeting", topic)
+
+    def _run(self) -> LeadOutcome:
         plan, lead_result = self.plan()
         if not plan:
             return self._outcome("no_plan", f"The Lead produced no plan: {lead_result.summary}")
         plan_text = format_plan(self.goal, plan)
         self._save("plan.md", plan_text + "\n")
-        if not self.approve(plan_text):
+        self.board.set("lead", "waiting", "รออนุมัติแผนงาน")
+        approved = self.approve(plan_text)
+        self.board.set("lead", "idle")
+        if not approved:
             return self._outcome("aborted", "Plan not approved; nothing was changed.", plan=plan)
 
         dev_sb = self.sb["dev"]
@@ -276,7 +295,11 @@ class Orchestrator:
                 )
                 break
             self.log(f"\n▶ Dev fixing {len(must_fix)} blocking bug(s) (round {round_no + 1})")
-            fix = self.run_agent("dev", Toolbox(dev_sb), fix_prompt(self.goal, must_fix))
+            self._meeting(f"QA ส่งบั๊ก {len(must_fix)} ข้อให้ Dev")
+            self.board.set("lead", "idle")
+            self.board.set("qa", "idle")
+            with self.board.state("dev", "working", f"แก้บั๊กรอบ {round_no + 1}"):
+                fix = self.run_agent("dev", Toolbox(dev_sb), fix_prompt(self.goal, must_fix))
             done.append((PlanTask(f"Fix QA round {round_no + 1}", "", ""), fix))
             earlier = must_fix
 
@@ -291,6 +314,7 @@ class Orchestrator:
                 open_bugs=bugs,
             )
 
+        self._meeting("สรุปงานก่อนเปิด PR")
         try:
             description = self.summarize(
                 summary_prompt(self.goal, plan, done, report, stat, bugs)

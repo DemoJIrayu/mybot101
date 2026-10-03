@@ -28,6 +28,7 @@ from agent_team.agent import SYSTEM_PROMPTS, Agent, RunResult
 from agent_team.config import REPO_ROOT, settings_for
 from agent_team.lead import Orchestrator
 from agent_team.sandbox import Sandbox
+from agent_team.status import StatusBoard
 from agent_team.tools import Toolbox, is_test_path
 from agent_team.workspace import (  # noqa: F401  (re-exported for tests and scripts)
     PROTECTED_PREFIXES,
@@ -38,6 +39,7 @@ from agent_team.workspace import (  # noqa: F401  (re-exported for tests and scr
 )
 
 RUNS_DIR = REPO_ROOT / "runs"
+BOARD = StatusBoard()  # live status for the 3D office (runs/status.json)
 
 
 def _git(*args: str) -> str:
@@ -62,8 +64,12 @@ def open_pull_request(role: str, title: str, body: str, patch_file: Path, base: 
         _git("switch", "--quiet", start)
 
 
-def _ask(question: str) -> bool:
-    return input(f"\n{question} [y/N] ").strip().lower() == "y"
+def _ask(question: str, role: str | None = None, label: str = "") -> bool:
+    """Ask the human; while waiting, show `role` as waiting for approval in the office."""
+    if role is None:
+        return input(f"\n{question} [y/N] ").strip().lower() == "y"
+    with BOARD.state(role, "waiting", label or question):
+        return input(f"\n{question} [y/N] ").strip().lower() == "y"
 
 
 def _stamp() -> str:
@@ -87,6 +93,7 @@ def make_agent(role: str, toolbox: Toolbox, max_steps: int | None = None) -> Age
         SYSTEM_PROMPTS[role],
         max_steps=max_steps or settings.max_steps,
         max_tokens=settings.max_tokens,
+        on_step=lambda _step: BOARD.heartbeat(role),
     )
 
 
@@ -144,6 +151,7 @@ def run_lead(goal: str, max_fix_rounds: int) -> int:
         open_pr=open_pr,
         runs_dir=RUNS_DIR,
         max_fix_rounds=max_fix_rounds,
+        board=BOARD,
     ).run()
     if outcome.run_dir is not None and outcome.run_dir.exists():
         print(f"Run files: {outcome.run_dir.relative_to(REPO_ROOT)}")
@@ -205,17 +213,18 @@ def main(argv: list[str] | None = None) -> int:
         task = args.task
         toolbox = Toolbox(sandbox)
 
-    client = OpenAI(base_url=settings.base_url, api_key=settings.api_key, max_retries=2)
-    agent = Agent(
-        client,
-        settings.model,
-        toolbox,
-        SYSTEM_PROMPTS[args.role],
-        max_steps=args.max_steps or settings.max_steps,
-        max_tokens=settings.max_tokens,
-    )
+    try:
+        return _run_single(args, settings, toolbox, task, sandbox, pr)
+    finally:
+        BOARD.set(args.role, "idle")
+
+
+def _run_single(args, settings, toolbox: Toolbox, task: str, sandbox: Sandbox, pr) -> int:
+    agent = make_agent(args.role, toolbox, args.max_steps)
     print(f"▶ {args.role} agent working (model alias: {settings.model}) ...\n")
-    result = agent.run(task)
+    label = f"ทดสอบ PR #{pr.number}" if pr is not None else args.task
+    with BOARD.state(args.role, "working", label):
+        result = agent.run(task)
 
     print("\n" + "=" * 60)
     print(f"Finished: {result.finished} · steps: {result.steps} · {result.usage_line()}")
@@ -246,7 +255,11 @@ def main(argv: list[str] | None = None) -> int:
             print("\n".join(f"   {p}" for p in blocked))
         elif base is None:
             print("\nℹ️  Can't open a follow-up PR for this PR (fork or closed); patch kept.")
-        elif _ask(f"Open a pull request into '{base}' with these changes? Review the diff first."):
+        elif _ask(
+            f"Open a pull request into '{base}' with these changes? Review the diff first.",
+            args.role,
+            "รออนุมัติเปิด PR",
+        ):
             if pr is not None:
                 title = f"agent(qa): tests for #{pr.number} {pr.title}"[:72]
                 body = f"Adds QA tests for #{pr.number}.\n\n{report}\n{_footer(result, 'qa')}"
@@ -264,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         print("No file changes.")
 
     if pr is not None and report_file is not None:
-        if _ask(f"Post the QA report as a comment on PR #{pr.number}?"):
+        if _ask(f"Post the QA report as a comment on PR #{pr.number}?", "qa", "รออนุมัติโพสต์รายงาน"):
             if pr_url:
                 with report_file.open("a", encoding="utf-8") as fh:
                     fh.write(f"\nNew tests: {pr_url}\n")

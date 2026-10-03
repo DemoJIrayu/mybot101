@@ -1,0 +1,363 @@
+:root {
+  --font: "IBM Plex Sans Thai", "Leelawadee UI", "Tahoma", sans-serif;
+
+  /* light: cool office grey with blue-grey ink */
+  --bg: #e8eef0;
+  --card: #f7fafb;
+  --ink: #1d2a33;
+  --muted: #5b6b76;
+  --line: #cbd6dc;
+  --stage: #dfe7ea;
+  --focus: #3c8dff;
+
+  --lead: #f2b134;
+  --dev: #3c8dff;
+  --qa: #2fb37a;
+  --waiting: #ff5a5f;
+
+  --chip-idle-bg: #e3e9ec;
+  --chip-idle-fg: #4c5c66;
+  --chip-working-bg: #d9ebff;
+  --chip-working-fg: #1352a8;
+  --chip-waiting-bg: #ffe1e1;
+  --chip-waiting-fg: #a3191e;
+  --chip-meeting-bg: #fff1c9;
+  --chip-meeting-fg: #7a5600;
+
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  /* dark: Bangkok night navy */
+  --bg: #0e1a2b;
+  --card: #15243a;
+  --ink: #e6eef4;
+  --muted: #93a6b8;
+  --line: #26395a;
+  --stage: #0b1526;
+  --focus: #7db3ff;
+
+  --chip-idle-bg: #22344f;
+  --chip-idle-fg: #b6c5d3;
+  --chip-working-bg: #17365f;
+  --chip-working-fg: #a9cdff;
+  --chip-waiting-bg: #4a1f2a;
+  --chip-waiting-fg: #ffb3b5;
+  --chip-meeting-bg: #44391a;
+  --chip-meeting-fg: #ffe08a;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 24px 16px 40px;
+  display: flex;
+  justify-content: center;
+}
+
+.card {
+  width: 100%;
+  max-width: 1120px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  overflow: hidden;
+}
+
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 20px 14px 24px;
+}
+
+.card-head h1 {
+  margin: 0;
+  font-size: 1.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+.sub {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.demo-tag {
+  margin-left: 10px;
+  padding: 1px 10px;
+  border-radius: 999px;
+  border: 1px dashed var(--muted);
+  font-size: 0.8rem;
+}
+
+.theme-toggle {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.theme-toggle svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.theme-toggle:hover {
+  background: var(--stage);
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.stage {
+  position: relative;
+  height: clamp(340px, 58vh, 620px);
+  background: var(--stage);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.stage canvas {
+  display: block;
+}
+
+.stage-message {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.follow-toggle {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.follow-toggle[aria-pressed="false"] {
+  color: var(--muted);
+}
+
+/* labels floating over the bots (rendered as HTML by drei) */
+.bot-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 64px;
+  padding: 2px 10px 3px;
+  border-radius: 10px;
+  border: 2px solid;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.bot-label b {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.bot-label span {
+  color: var(--muted);
+}
+
+.bot-label-waiting span {
+  color: var(--waiting);
+  font-weight: 600;
+}
+.bang {
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 18px;
+  color: #fff;
+  user-select: none;
+}
+
+/* team roster under the scene */
+.roster {
+  list-style: none;
+  margin: 0;
+  padding: 6px 12px 10px;
+}
+
+.roster-row {
+  display: grid;
+  grid-template-columns: 12px minmax(130px, 170px) auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.roster-row:last-child {
+  border-bottom: none;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.who {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+
+.who strong {
+  font-weight: 600;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.chip {
+  justify-self: start;
+  padding: 2px 12px;
+  border-radius: 999px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.chip-idle {
+  background: var(--chip-idle-bg);
+  color: var(--chip-idle-fg);
+}
+.chip-working {
+  background: var(--chip-working-bg);
+  color: var(--chip-working-fg);
+}
+.chip-waiting {
+  background: var(--chip-waiting-bg);
+  color: var(--chip-waiting-fg);
+}
+.chip-meeting {
+  background: var(--chip-meeting-bg);
+  color: var(--chip-meeting-fg);
+}
+
+.task {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.since {
+  white-space: nowrap;
+}
+
+.note {
+  margin: 0;
+  padding: 14px 24px 20px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  max-width: 80ch;
+}
+
+.note-error {
+  color: var(--chip-waiting-fg);
+}
+
+.note code {
+  font-size: 0.85em;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--stage);
+}
+
+.note a {
+  color: var(--focus);
+}
+
+@media (max-width: 640px) {
+  .card-head {
+    padding: 16px 14px 12px 16px;
+  }
+  .card-head h1 {
+    font-size: 1.45rem;
+  }
+  .roster-row {
+    grid-template-columns: 12px 1fr auto;
+    grid-template-areas:
+      "dot who chip"
+      ". task task";
+    row-gap: 4px;
+  }
+  .roster-row .swatch {
+    grid-area: dot;
+  }
+  .roster-row .who {
+    grid-area: who;
+  }
+  .roster-row .chip {
+    grid-area: chip;
+  }
+  .roster-row .task {
+    grid-area: task;
+    white-space: normal;
+  }
+  .roster-row .since {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

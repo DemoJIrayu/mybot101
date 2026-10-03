@@ -6,12 +6,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1
 
+# npm 11.10+ so agents' installs respect .npmrc min-release-age (supply-chain safety).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 python3-pip python3-venv git curl jq ripgrep \
  && rm -rf /var/lib/apt/lists/* \
  && pip3 install --no-cache-dir uv \
- && corepack enable
+ && corepack enable \
+ && npm install -g npm@11.20.0
 
 # Non-root user; the 'pwuser' account already exists in the Playwright image.
 RUN mkdir -p /workspace && chown pwuser:pwuser /workspace

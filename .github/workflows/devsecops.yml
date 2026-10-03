@@ -185,6 +185,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # npm 11.10+ enforces .npmrc min-release-age and blocks unreviewed install
+      # scripts; Node 22 ships npm 10, which silently ignores both.
+      - run: npm install -g npm@11.20.0
       - name: Install, lint, type-check, test, build each Node / Next.js project
         run: |
           bash .github/scripts/projects.sh package.json | while IFS= read -r dir; do
@@ -209,6 +212,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # npm 11.10+ enforces .npmrc min-release-age and blocks unreviewed install
+      # scripts; Node 22 ships npm 10, which silently ignores both.
+      - run: npm install -g npm@11.20.0
       - name: Playwright end-to-end tests (where a playwright config exists)
         run: |
           bash .github/scripts/projects.sh 'playwright.config.*' | while IFS= read -r dir; do
