@@ -10,29 +10,42 @@ PROTECTED_PREFIXES = (".github/", "infra/", "agents/")
 _AGENT_GIT = ["git", "-c", "user.name=agent-team", "-c", "user.email=agent-team@localhost"]
 
 
-def protected_changes(paths: list[str]) -> list[str]:
-    return [p for p in paths if p.startswith(PROTECTED_PREFIXES)]
+def protected_changes(
+    paths: list[str], protected: tuple[str, ...] = PROTECTED_PREFIXES
+) -> list[str]:
+    return [p for p in paths if p.startswith(protected)]
 
 
-def disallowed_changes(role: str, paths: list[str], allow_protected: bool) -> list[str]:
+def disallowed_changes(
+    role: str,
+    paths: list[str],
+    allow_protected: bool,
+    protected: tuple[str, ...] = PROTECTED_PREFIXES,
+) -> list[str]:
     """Paths this role must not change. QA's test-only rule can't be overridden."""
-    blocked = [] if allow_protected else protected_changes(paths)
+    blocked = [] if allow_protected else protected_changes(paths, protected)
     if role == "qa":
         blocked += [p for p in paths if not is_test_path(p) and p not in blocked]
     return blocked
 
 
-def prepare_workspace(sandbox: Sandbox, repo_url: str) -> None:
-    """Fresh shallow clone of the repo's default branch at /workspace/repo."""
-    res = sandbox.exec(["rm", "-rf", WORKDIR], workdir="/workspace")
-    if res.ok:
-        res = sandbox.exec(
-            ["git", "clone", "--quiet", "--depth", "1", repo_url, WORKDIR],
-            workdir="/workspace",
-            timeout=180,
-        )
-    if not res.ok:
-        raise RuntimeError(f"could not clone {repo_url} in {sandbox.container}:\n{res.output}")
+def load_tree(sandbox: Sandbox, tree: bytes) -> None:
+    """Give the sandbox a fresh copy of the code (a tar archive) as a local git repo.
+
+    The repo has one local commit (the starting point), so agents' work shows up as a
+    plain diff. It has no remote and no credentials: agents can't push anywhere.
+    """
+    steps = [
+        (["rm", "-rf", WORKDIR], None),
+        (["mkdir", "-p", WORKDIR], None),
+        (["tar", "-x", "-f", "-", "-C", WORKDIR], tree),
+        (["git", "init", "--quiet", "-b", "main", WORKDIR], None),
+    ]
+    for args, data in steps:
+        res = sandbox.exec(args, stdin=data, workdir="/workspace", timeout=300)
+        if not res.ok:
+            raise RuntimeError(f"could not load the code into {sandbox.container}:\n{res.output}")
+    commit_all(sandbox, "starting point")
 
 
 def collect_diff(sandbox: Sandbox) -> tuple[list[str], str, str]:

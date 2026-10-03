@@ -44,7 +44,6 @@ class Settings:
     api_key: str
     base_url: str
     sandbox: str
-    repo_url: str
     max_steps: int
     max_tokens: int
 
@@ -63,7 +62,6 @@ def settings_for(role: str) -> Settings:
         api_key=api_key,
         base_url=os.environ.get("LITELLM_URL", "http://127.0.0.1:4000/v1"),
         sandbox=os.environ.get(f"{role.upper()}_SANDBOX", f"agent-team-sandbox-{role}-1"),
-        repo_url=os.environ.get("AGENT_REPO_URL", "https://github.com/DemoJIrayu/mybot101"),
         max_steps=int(os.environ.get("AGENT_MAX_STEPS", spec["max_steps"])),
         max_tokens=int(os.environ.get("AGENT_MAX_TOKENS", spec["max_tokens"])),
     )

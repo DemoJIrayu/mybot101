@@ -36,7 +36,7 @@ class Sandbox:
         self,
         args: Sequence[str],
         *,
-        stdin: str | None = None,
+        stdin: str | bytes | None = None,
         workdir: str = WORKDIR,
         timeout: int | None = None,
     ) -> CommandResult:
@@ -47,18 +47,23 @@ class Sandbox:
         # `timeout` inside the container really stops the process; the host-side
         # timeout below is only a backstop.
         cmd += ["-w", workdir, self.container, "timeout", str(limit), *args]
+        binary = isinstance(stdin, bytes)  # e.g. a tar archive of the code
         try:
             proc = self._run(
                 cmd,
                 input=stdin,
                 capture_output=True,
-                text=True,
+                text=not binary,
                 timeout=limit + 15,
                 check=False,
             )
         except subprocess.TimeoutExpired:
             return CommandResult(124, f"command timed out after {limit}s")
-        output = (proc.stdout or "") + (proc.stderr or "")
+        out, err = proc.stdout or "", proc.stderr or ""
+        if binary:
+            out = out.decode("utf-8", "replace") if isinstance(out, bytes) else out
+            err = err.decode("utf-8", "replace") if isinstance(err, bytes) else err
+        output = out + err
         if proc.returncode == 124:
             output += f"\n[command timed out after {limit}s]"
         return CommandResult(proc.returncode, output)

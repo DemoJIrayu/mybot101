@@ -9,6 +9,14 @@
 
 name: agent-team
 
+# Test databases for the agents (profile "databases"). Throwaway data in memory, no
+# ports on your machine, reachable only from the sandboxes. Never real data.
+x-test-db-env: &test-db-env
+  DATABASE_URL: postgresql://app:${TEST_DB_PASSWORD:-agent-test-only}@test-postgres:5432/app_test
+  MYSQL_URL: mysql://app:${TEST_DB_PASSWORD:-agent-test-only}@test-mysql:3306/app_test
+  MONGODB_URI: mongodb://test-mongo:27017/app_test
+  REDIS_URL: redis://test-redis:6379
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -58,6 +66,7 @@ services:
     image: agent-team/sandbox:latest
     restart: "no"
     environment:
+      <<: *test-db-env
       AGENT_ROLE: lead
     volumes:
       - ws-lead:/workspace
@@ -72,6 +81,7 @@ services:
   sandbox-dev:
     <<: *sandbox
     environment:
+      <<: *test-db-env
       AGENT_ROLE: dev
     volumes:
       - ws-dev:/workspace
@@ -80,11 +90,51 @@ services:
   sandbox-qa:
     <<: *sandbox
     environment:
+      <<: *test-db-env
       AGENT_ROLE: qa
     volumes:
       - ws-qa:/workspace
     mem_limit: 1536m          # headless Chromium for Playwright
     shm_size: 512m
+
+  # ---- test databases: docker compose --profile databases up -d ----
+  test-postgres:
+    profiles: ["databases"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${TEST_DB_PASSWORD:-agent-test-only}
+      POSTGRES_DB: app_test
+    tmpfs: ["/var/lib/postgresql/data"]
+    networks: [sandbox-net]
+    mem_limit: 256m
+
+  test-mysql:
+    profiles: ["databases"]
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${TEST_DB_PASSWORD:-agent-test-only}
+      MYSQL_DATABASE: app_test
+      MYSQL_USER: app
+      MYSQL_PASSWORD: ${TEST_DB_PASSWORD:-agent-test-only}
+    tmpfs: ["/var/lib/mysql"]
+    networks: [sandbox-net]
+    mem_limit: 512m
+
+  test-mongo:
+    profiles: ["databases"]
+    image: mongo:7
+    command: ["--wiredTigerCacheSizeGB", "0.25", "--bind_ip_all"]
+    tmpfs: ["/data/db"]
+    networks: [sandbox-net]
+    mem_limit: 512m
+
+  test-redis:
+    profiles: ["databases"]
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [sandbox-net]
+    mem_limit: 64m
 
 networks:
   core-net:            # LiteLLM + Postgres

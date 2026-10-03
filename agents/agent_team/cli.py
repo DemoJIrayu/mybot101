@@ -5,10 +5,14 @@
     python -m agent_team qa --pr 3 "Focus on input validation"
     python -m agent_team lead "Add a Next.js page in web/ that uses the calc API"
     python -m agent_team lead --resume runs/20261003-173040-lead --max-steps 60
+    python -m agent_team lead --repo DemoJIrayu/Anne-AIChatbot "Scaffold backend/ and frontend/"
+    python -m agent_team qa --repo DemoJIrayu/YourNorst --pr 12
 
 Flow:
-  1. A fresh clone of the repo (and, for QA, the pull request) inside the agent's sandbox.
-  2. The agent works there; it never touches your files or holds a GitHub token.
+  1. Your machine fetches the repo with your `gh` login (repos must be listed in
+     infra/repos.toml and pass the safety check) and gives the agent a plain copy of the
+     files. The agent never touches your files and never holds a GitHub token.
+  2. The agent works in its sandbox.
   3. You see the diff (and, for QA, a bug report). Only if you approve, changes go to
      a new branch pushed with your `gh` login and a PR is opened, where the DevSecOps
      pipeline checks them before anything is merged.
@@ -17,17 +21,18 @@ Flow:
 from __future__ import annotations
 
 import argparse
-import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from openai import OpenAI
 
-from agent_team import github, qa
+from agent_team import github, qa, repos, safety
 from agent_team.agent import SYSTEM_PROMPTS, Agent, RunResult
 from agent_team.config import REPO_ROOT, settings_for
 from agent_team.lead import Orchestrator, ResumeState, load_resume
+from agent_team.repos import RepoError, Target
 from agent_team.sandbox import Sandbox
 from agent_team.status import StatusBoard
 from agent_team.tools import Toolbox, is_test_path
@@ -35,7 +40,7 @@ from agent_team.workspace import (  # noqa: F401  (re-exported for tests and scr
     PROTECTED_PREFIXES,
     collect_diff,
     disallowed_changes,
-    prepare_workspace,
+    load_tree,
     protected_changes,
 )
 
@@ -43,26 +48,59 @@ RUNS_DIR = REPO_ROOT / "runs"
 BOARD = StatusBoard()  # live status for the 3D office (runs/status.json)
 
 
-def _git(*args: str) -> str:
-    return subprocess.run(
-        ["git", "-C", str(REPO_ROOT), *args], check=True, capture_output=True, text=True
-    ).stdout.strip()
+@dataclass
+class Workspace:
+    """A repo prepared on your machine for one run."""
+
+    target: Target
+    branch: str  # default branch, where PRs go
+    base_sha: str  # the commit the agents start from
+    tree: bytes  # the files at base_sha, for the sandboxes
 
 
-def open_pull_request(role: str, title: str, body: str, patch_file: Path, base: str) -> str:
-    if _git("status", "--porcelain", "--untracked-files=no"):
-        raise RuntimeError("your repo has uncommitted changes; commit or stash them first")
+def prepare(repo_name: str | None) -> Workspace:
+    """Fetch the repo with your gh login, run the safety check, snapshot the files."""
+    target = repos.get_target(repo_name)
+    print(f"▶ Repo: {target.name} (your copy: {target.local_dir})")
+    repos.ensure_clone(target)
+    branch = repos.default_branch(target)
+    problems = safety.preflight(target, branch)
+    if problems:
+        raise RepoError(
+            f"{target.name} isn't ready for the agents yet:\n"
+            + "\n".join(f"  - {p}" for p in problems)
+        )
+    base_sha = repos.git(target, "rev-parse", f"origin/{branch}")
+    return Workspace(target, branch, base_sha, repos.archive(target, base_sha))
+
+
+def open_pull_request(
+    target: Target, role: str, title: str, body: str, patch_file: Path, base: str, start_point: str
+) -> str:
+    """Apply the patch on a new branch in your copy of the repo, push it, open the PR."""
+
+    def g(*args: str) -> str:
+        return repos.git(target, *args)
+
+    if g("status", "--porcelain", "--untracked-files=no"):
+        raise RuntimeError(
+            f"{target.local_dir} has uncommitted changes; commit or stash them first"
+        )
     branch = f"agent/{role}-{time.strftime('%Y%m%d-%H%M%S')}"
-    start = _git("rev-parse", "--abbrev-ref", "HEAD")
-    _git("fetch", "--quiet", "origin", base)
-    _git("switch", "--quiet", "-c", branch, f"origin/{base}")
+    start = g("rev-parse", "--abbrev-ref", "HEAD")
+    back = (
+        ["switch", "--quiet", start]
+        if start != "HEAD"
+        else ["switch", "--quiet", "--detach", g("rev-parse", "HEAD")]
+    )
+    g("switch", "--quiet", "-c", branch, start_point)
     try:
-        _git("apply", "--index", str(patch_file))
-        _git("commit", "--quiet", "-m", title)
-        _git("push", "--quiet", "-u", "origin", branch)
-        return github.create_pr(base, branch, title, body)
+        g("apply", "--index", str(patch_file))
+        g("commit", "--quiet", "-m", title)
+        g("push", "--quiet", "-u", "origin", branch)
+        return github.create_pr(target.name, base, branch, title, body)
     finally:
-        _git("switch", "--quiet", start)
+        g(*back)
 
 
 def _ask(question: str, role: str | None = None, label: str = "") -> bool:
@@ -103,7 +141,9 @@ def run_lead(
     max_fix_rounds: int,
     resume: ResumeState | None = None,
     dev_max_steps: int | None = None,
+    repo: str | None = None,
 ) -> int:
+    repos.get_target(repo)  # refuse unlisted repos before touching anything
     roles = ("lead", "dev", "qa")
     sandboxes = {role: Sandbox(settings_for(role).sandbox) for role in roles}
     stopped = [sb.container for sb in sandboxes.values() if not sb.is_running()]
@@ -114,6 +154,7 @@ def run_lead(
             file=sys.stderr,
         )
         return 2
+    ws = prepare(repo)
 
     def run_agent(role: str, toolbox: Toolbox, task: str) -> RunResult:
         steps = dev_max_steps if role == "dev" else None
@@ -146,12 +187,12 @@ def run_lead(
         return _ask("Approve this plan?")
 
     def open_pr(title: str, body: str, patch_file: Path) -> str:
-        return open_pull_request("lead", title, body, patch_file, "main")
+        return open_pull_request(ws.target, "lead", title, body, patch_file, ws.branch, ws.base_sha)
 
     outcome = Orchestrator(
         goal,
         sandboxes=sandboxes,
-        repo_url=lead_settings.repo_url,
+        tree=ws.tree,
         run_agent=run_agent,
         summarize=summarize,
         approve=approve,
@@ -160,6 +201,8 @@ def run_lead(
         max_fix_rounds=max_fix_rounds,
         board=BOARD,
         resume=resume,
+        protected=ws.target.protected,
+        repo="" if ws.target.own_repo else ws.target.name,
     ).run()
     if outcome.run_dir is not None and outcome.run_dir.exists():
         print(f"Run files: {outcome.run_dir.relative_to(REPO_ROOT)}")
@@ -171,6 +214,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("role", choices=sorted(SYSTEM_PROMPTS))
     parser.add_argument(
         "task", nargs="?", default="", help="what to do (dev), goal (lead), or extra focus (qa)"
+    )
+    parser.add_argument(
+        "--repo",
+        metavar="OWNER/REPO",
+        help="repository to work on (must be in infra/repos.toml); default: this repo",
     )
     parser.add_argument("--pr", type=int, help="pull request number for the QA agent to test")
     parser.add_argument(
@@ -188,9 +236,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--allow-protected",
         action="store_true",
-        help=f"allow changes under {', '.join(PROTECTED_PREFIXES)} (you'll still review)",
+        help="allow changes to the repo's protected paths (you'll still review)",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_intermixed_args(argv)  # allows: lead --repo X "goal"
 
     if args.role == "qa" and not args.pr:
         parser.error("the qa agent needs --pr NUMBER")
@@ -200,17 +248,28 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--resume and --from-task are only used by the lead")
     if args.from_task and not args.resume:
         parser.error("--from-task needs --resume RUN_DIR")
+    try:
+        return _dispatch(args, parser)
+    except RepoError as exc:
+        print(f"⛔ {exc}", file=sys.stderr)
+        return 2
+
+
+def _dispatch(args, parser) -> int:
     if args.role == "lead" and args.resume:
         try:
             goal, resume = load_resume(Path(args.resume), args.from_task)
         except (OSError, ValueError, KeyError) as exc:
             parser.error(f"can't resume from {args.resume}: {exc}")
-        return run_lead(goal, args.fix_rounds, resume, args.max_steps)
+        if args.repo and resume.repo and args.repo.lower() != resume.repo.lower():
+            parser.error(f"that run was for {resume.repo}, not {args.repo}")
+        return run_lead(goal, args.fix_rounds, resume, args.max_steps, args.repo or resume.repo)
     if args.role != "qa" and not args.task.strip():
         parser.error(f"the {args.role} agent needs a task")
     if args.role == "lead":
-        return run_lead(args.task, args.fix_rounds, None, args.max_steps)
+        return run_lead(args.task, args.fix_rounds, None, args.max_steps, args.repo)
 
+    repos.get_target(args.repo)  # refuse unlisted repos before touching anything
     settings = settings_for(args.role)
     sandbox = Sandbox(settings.sandbox)
     if not sandbox.is_running():
@@ -221,34 +280,43 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    ws = prepare(args.repo)
     pr = None
     if args.role == "qa":
-        pr = github.get_pr(args.pr)
+        pr = github.get_pr(args.pr, ws.target.name)
         if pr.state == "CLOSED":
             print(f"PR #{pr.number} was closed without merging; nothing to test.")
             return 1
-        print(f"▶ Checking out PR #{pr.number} ({pr.state.lower()}) in {settings.sandbox} ...")
-        pr_stat, pr_diff = qa.prepare_pr_workspace(sandbox, settings.repo_url, pr)
+        print(f"▶ Loading PR #{pr.number} ({pr.state.lower()}) into {settings.sandbox} ...")
+        tree, pr_stat, pr_diff = qa.pr_tree(ws.target, pr)
+        load_tree(sandbox, tree)
         task = qa.build_qa_task(pr, pr_stat, pr_diff, args.task)
         toolbox = Toolbox(
-            sandbox, can_write=is_test_path, write_rule=qa.WRITE_RULE, bug_reports=True
+            sandbox,
+            # nosemgrep: is-function-without-parentheses (passed as a callback, not called)
+            can_write=is_test_path,
+            write_rule=qa.WRITE_RULE,
+            bug_reports=True,
         )
     else:
-        print(f"▶ Preparing a fresh clone in {settings.sandbox} ...")
-        prepare_workspace(sandbox, settings.repo_url)
+        print(f"▶ Loading {ws.target.name}@{ws.base_sha[:8]} into {settings.sandbox} ...")
+        load_tree(sandbox, ws.tree)
         task = args.task
         toolbox = Toolbox(sandbox)
 
     try:
-        return _run_single(args, settings, toolbox, task, sandbox, pr)
+        return _run_single(args, settings, ws, toolbox, task, sandbox, pr)
     finally:
         BOARD.set(args.role, "idle")
 
 
-def _run_single(args, settings, toolbox: Toolbox, task: str, sandbox: Sandbox, pr) -> int:
+def _run_single(
+    args, settings, ws: Workspace, toolbox: Toolbox, task: str, sandbox: Sandbox, pr
+) -> int:
     agent = make_agent(args.role, toolbox, args.max_steps)
     print(f"▶ {args.role} agent working (model alias: {settings.model}) ...\n")
-    label = f"ทดสอบ PR #{pr.number}" if pr is not None else args.task
+    tag = "" if ws.target.own_repo else f"[{ws.target.short}] "
+    label = tag + (f"ทดสอบ PR #{pr.number}" if pr is not None else args.task)
     with BOARD.state(args.role, "working", label):
         result = agent.run(task)
 
@@ -262,7 +330,7 @@ def _run_single(args, settings, toolbox: Toolbox, task: str, sandbox: Sandbox, p
     report_file = None
     if pr is not None:
         report = qa.build_report(pr, result, toolbox.bugs, stat)
-        report_file = RUNS_DIR / f"{stamp}-qa-pr{pr.number}.md"
+        report_file = RUNS_DIR / f"{stamp}-qa-{ws.target.short}-pr{pr.number}.md"
         report_file.write_text(report, encoding="utf-8")
         print(f"\n{report}\nReport saved to {report_file.relative_to(REPO_ROOT)}")
     else:
@@ -270,12 +338,12 @@ def _run_single(args, settings, toolbox: Toolbox, task: str, sandbox: Sandbox, p
 
     pr_url = None
     if names:
-        patch_file = RUNS_DIR / f"{stamp}-{args.role}.patch"
+        patch_file = RUNS_DIR / f"{stamp}-{args.role}-{ws.target.short}.patch"
         patch_file.write_text(patch if patch.endswith("\n") else patch + "\n", encoding="utf-8")
         print(f"Changes:\n{stat}\nFull diff saved to {patch_file.relative_to(REPO_ROOT)}")
 
-        blocked = disallowed_changes(args.role, names, args.allow_protected)
-        base = pr.test_branch_target() if pr is not None else "main"
+        blocked = disallowed_changes(args.role, names, args.allow_protected, ws.target.protected)
+        base = pr.test_branch_target() if pr is not None else ws.branch
         if blocked:
             print(f"\n⛔ The {args.role} agent changed files it isn't allowed to; no PR:")
             print("\n".join(f"   {p}" for p in blocked))
@@ -295,7 +363,14 @@ def _run_single(args, settings, toolbox: Toolbox, task: str, sandbox: Sandbox, p
                     f"**Task:** {args.task}\n\n**Agent summary:**\n{result.summary}\n\n"
                     f"{_footer(result, args.role)}"
                 )
-            pr_url = open_pull_request(args.role, title, body, patch_file, base)
+            if pr is not None:  # tests go on top of the PR's (or base's) latest code
+                repos.git(ws.target, "fetch", "--quiet", "origin", base)
+                start_point = f"origin/{base}"
+            else:  # the agent worked from base_sha; branch from exactly there
+                start_point = ws.base_sha
+            pr_url = open_pull_request(
+                ws.target, args.role, title, body, patch_file, base, start_point
+            )
             print(f"✅ Pull request opened: {pr_url}")
         else:
             print("Not opening a PR. The patch file is kept for reference.")
@@ -307,7 +382,7 @@ def _run_single(args, settings, toolbox: Toolbox, task: str, sandbox: Sandbox, p
             if pr_url:
                 with report_file.open("a", encoding="utf-8") as fh:
                     fh.write(f"\nNew tests: {pr_url}\n")
-            github.comment_on_pr(pr.number, report_file)
+            github.comment_on_pr(pr.number, report_file, ws.target.name)
             print(f"✅ Comment posted on {pr.url}")
 
     return 0 if result.finished else 1

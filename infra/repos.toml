@@ -1,0 +1,23 @@
+# Repositories the agent team may work on. Anything not listed here is refused.
+# Changes to this file go through a pull request like any other code.
+#
+#   protected                  path prefixes agents must never change (CI, infra, secrets)
+#   require_ci                 the repo must call the shared DevSecOps workflow
+#                              (.github/workflows/devsecops.yml -> mybot101's reusable one)
+#   require_branch_protection  main must require a PR + passing checks
+#
+# The agents get a plain copy of the files (no .git, no tokens). Your machine keeps a
+# clone in ~/agent-repos/<owner>/<repo> and opens the pull requests with your gh login.
+
+[repos."DemoJIrayu/mybot101"]
+protected = [".github/", "infra/", "agents/"]
+
+[repos."DemoJIrayu/Anne-AIChatbot"]
+protected = [".github/", "infra/", "deploy/"]
+
+[repos."DemoJIrayu/YourNorst"]
+protected = [".github/", "infra/", "deploy/"]
+# Private repo. Branch protection on private repos needs GitHub Pro (or a paid org).
+# If your plan doesn't include it, set this to false: every change still goes through
+# a pull request that you review and merge yourself, with the CI checks shown on it.
+require_branch_protection = true
