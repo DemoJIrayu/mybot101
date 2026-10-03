@@ -3,13 +3,16 @@
 #
 # Aliases:
 #   lead          -> DeepSeek V4-Pro (planning, review; worth paying for)
-#   worker        -> Qwen3-Coder free on OpenRouter (Dev + QA)
-#   worker-paid   -> DeepSeek Flash (cheap), used automatically when the free model is
-#                    rate-limited or down
+#   worker        -> DeepSeek Flash (Dev + QA): cheap, and its prompt cache makes
+#                    long agent runs ~$0.05
+#   worker-paid   -> DeepSeek V4-Pro, backup used automatically if Flash errors
+#                    (the alias name is kept so existing agent keys keep working)
 #
-# Check model IDs before first run; providers rename models:
+# History: worker was Qwen3-Coder :free on OpenRouter until OpenRouter removed the free
+# tier for it (404 "This model is unavailable for free", 2026-10-03).
+#
+# Check model IDs before changing them; providers rename models:
 #   DeepSeek:   https://api-docs.deepseek.com/quick_start/pricing
-#   OpenRouter: https://openrouter.ai/models?max_price=0
 # Model IDs checked 2026-10-01. DeepSeek charges half price off-peak; peak is
 # 08:00-11:00 and 13:00-17:00 Bangkok time on weekdays.
 
@@ -21,13 +24,12 @@ model_list:
 
   - model_name: worker
     litellm_params:
-      model: openrouter/qwen/qwen3-coder:free
-      api_key: os.environ/OPENROUTER_API_KEY
-      rpm: 15                       # stay under OpenRouter's free-tier limit
+      model: deepseek/deepseek-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
 
   - model_name: worker-paid
     litellm_params:
-      model: deepseek/deepseek-flash
+      model: deepseek/deepseek-v4-pro
       api_key: os.environ/DEEPSEEK_API_KEY
 
 router_settings:
