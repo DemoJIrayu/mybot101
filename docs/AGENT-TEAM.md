@@ -26,7 +26,7 @@ GitHub Actions: gitleaks · Semgrep · CodeQL · Trivy · dependency review · t
 
 ```
 agents/      Python — Lead, Dev and QA agents                  (steps 2, 4, 5 done)
-web/         Next.js — dashboard to watch and approve agents (later)
+office/      Next.js — 3D office: live view of the agents        (step 8, done)
 infra/       WSL, Docker, LiteLLM, sandbox image              (step 1, done)
 .github/     DevSecOps pipeline                               (step 3, done)
 ```
@@ -157,6 +157,18 @@ Test budget: QA adds at most 15 tests in the first round and 5 per re-test round
 Stops without a PR when: the plan is rejected, a Dev task doesn't finish (partial patch
 saved), or the change touches `.github/`, `infra/` or `agents/`. Everything from a run
 (plan, QA reports, final patch, PR body) is saved in `runs/<time>-lead/`.
+
+## Step 8 — the 3D office
+
+```bash
+cd ~/mybot101/office && npm ci && npm run build && npm start   # http://127.0.0.1:3300
+```
+
+The agents write their live state to `runs/status.json`: working, waiting for your
+approval, meeting (handoffs between Lead, Dev and QA) or idle. The office shows each bot
+walking to the matching zone, lights and sky follow Bangkok time, the camera follows the
+bot that's working, and the theme icon on the card switches system / light / dark.
+Try it without agents: http://127.0.0.1:3300/?demo=1. Details: `office/README.md`.
 
 ## Step 3 — CI pipeline
 

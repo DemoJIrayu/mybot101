@@ -260,3 +260,26 @@ def test_fix_prompt_lists_only_blocking_bugs_with_safe_numbering():
     text = fix_prompt("G", must)
     assert "Bug 1 [critical] crash" in text and "Bug 2 [high] wrong" in text
     assert "#1" not in text and "ugly" not in text
+
+
+def test_lead_flow_reports_live_status_for_the_office(tmp_path, origin, sandboxes):
+    from agent_team.status import StatusBoard
+
+    board = StatusBoard(tmp_path / "status.json")
+    script = Script(qa_bugs_per_round=(1, 0))
+    orch, _ = _orchestrator(tmp_path, origin, sandboxes, script, board=board)
+    assert orch.run().status == "pr_opened"
+    events = [(e["role"], e["state"]) for e in board.read()["events"]]
+    for expected in [
+        ("lead", "working"),
+        ("lead", "waiting"),
+        ("dev", "working"),
+        ("qa", "working"),
+        ("dev", "meeting"),
+        ("lead", "meeting"),
+    ]:
+        assert expected in events, expected
+    # Plan approval comes before any Dev work.
+    assert events.index(("lead", "waiting")) < events.index(("dev", "working"))
+    # Everyone is idle when the run is over.
+    assert {a["state"] for a in board.read()["agents"].values()} == {"idle"}
