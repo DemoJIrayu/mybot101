@@ -154,6 +154,18 @@ python -m agent_team lead "..." --fix-rounds 1      # fewer QA→Dev fix loops
 Test budget: QA adds at most 15 tests in the first round and 5 per re-test round, in one
 `tests/test_<module>_qa.py` file per module (extended, never a new file per round).
 
+**Resume a stopped run** (e.g. Dev hit its step limit) without re-planning:
+
+```bash
+python -m agent_team lead --resume runs/<time>-lead                  # continue where it stopped
+python -m agent_team lead --resume runs/<time>-lead --max-steps 60   # give Dev more steps
+python -m agent_team lead --resume runs/<time>-lead --from-task 2    # skip to a later task
+```
+
+The approved plan is reused (no planning, no approval), Dev's unfinished work
+(`partial.patch`) is restored into a fresh workspace, and Dev is told to finish it rather
+than start over. Each run keeps `plan.md`, `state.json` and, if stopped, `partial.patch`.
+
 Stops without a PR when: the plan is rejected, a Dev task doesn't finish (partial patch
 saved), or the change touches `.github/`, `infra/` or `agents/`. Everything from a run
 (plan, QA reports, final patch, PR body) is saved in `runs/<time>-lead/`.

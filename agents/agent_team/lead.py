@@ -10,6 +10,8 @@ as patches, and only the final, policy-checked patch ever reaches your machine.
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -151,6 +153,71 @@ def fallback_summary(open_bugs: list[Bug]) -> str:
     )
 
 
+CONTINUE_NOTE = (
+    "\n\nNOTE: a previous attempt at this task ran out of steps. Its unfinished work is "
+    "already in this workspace as uncommitted changes (see `git status` and `git diff`). "
+    "Don't start over: review what's there, finish the remaining parts, run the tests and "
+    "the linter, then call finish."
+)
+
+
+@dataclass
+class ResumeState:
+    """What a stopped Lead run left behind, so a new run can carry on from there."""
+
+    plan: list[PlanTask]
+    start_task: int  # 1-based task to continue with
+    done: list[tuple[str, str]] = field(default_factory=list)  # (title, Dev's summary)
+    patch: str = ""  # Dev's unfinished work
+    from_dir: str = ""
+
+
+def parse_plan_md(text: str) -> tuple[str, list[PlanTask]]:
+    """Read a plan.md written by format_plan() back into (goal, tasks)."""
+    goal_match = re.search(r"^Goal: (.+)$", text, re.M)
+    if not goal_match:
+        raise ValueError("plan.md has no 'Goal:' line")
+    tasks = []
+    task_re = re.compile(
+        r"^(\d+)\. (.+)\n"  # "1. Title"
+        r"   What: (.*(?:\n(?!   Done when: ).*)*)\n"  # description, may span lines
+        r"   Done when: (.*(?:\n(?!\d+\. ).*)*)",  # acceptance, until the next task
+        re.M,
+    )
+    for m in task_re.finditer(text):
+        tasks.append(PlanTask(m.group(2).strip(), m.group(3).strip(), m.group(4).strip()))
+    if not tasks:
+        raise ValueError("plan.md has no tasks")
+    return goal_match.group(1).strip(), tasks
+
+
+def load_resume(run_dir: Path, from_task: int | None = None) -> tuple[str, ResumeState]:
+    """Load (goal, ResumeState) from a stopped run's folder (state.json or plan.md)."""
+    run_dir = Path(run_dir)
+    state_file = run_dir / "state.json"
+    if state_file.is_file():
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        goal = state["goal"]
+        plan = [PlanTask(**t) for t in state["plan"]]
+        next_task = int(state.get("next_task", 1))
+        done = [(d["title"], d["summary"]) for d in state.get("done", [])]
+    elif (run_dir / "plan.md").is_file():
+        goal, plan = parse_plan_md((run_dir / "plan.md").read_text(encoding="utf-8"))
+        next_task, done = 1, []
+    else:
+        raise FileNotFoundError(f"no state.json or plan.md in {run_dir}")
+
+    start = from_task or next_task
+    if not 1 <= start <= len(plan):
+        raise ValueError(f"task {start} doesn't exist; the plan has {len(plan)} task(s)")
+    # Tasks before `start` count as done; keep real summaries where we have them.
+    known = dict(done)
+    done = [(t.title, known.get(t.title, "Done in an earlier run.")) for t in plan[: start - 1]]
+    patch_file = run_dir / "partial.patch"
+    patch = patch_file.read_text(encoding="utf-8") if patch_file.is_file() else ""
+    return goal, ResumeState(plan, start, done, patch, str(run_dir))
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -166,6 +233,7 @@ class Orchestrator:
         max_fix_rounds: int = 2,
         log: Callable[[str], None] = print,
         board: StatusBoard | None = None,
+        resume: ResumeState | None = None,
     ):
         self.goal = goal.strip()
         self.sb = sandboxes
@@ -177,6 +245,7 @@ class Orchestrator:
         self.max_fix_rounds = max(0, max_fix_rounds)
         self.log = log
         self.board = board or NullBoard()
+        self.resume = resume
         self.run_dir = runs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}-lead"
 
     def _save(self, name: str, text: str) -> Path:
@@ -184,6 +253,15 @@ class Orchestrator:
         path = self.run_dir / name
         path.write_text(text, encoding="utf-8")
         return path
+
+    def _save_state(self, plan: list[PlanTask], next_task: int, done) -> None:
+        state = {
+            "goal": self.goal,
+            "plan": [t.__dict__ for t in plan],
+            "next_task": next_task,
+            "done": [{"title": t.title, "summary": r.summary} for t, r in done],
+        }
+        self._save("state.json", json.dumps(state, ensure_ascii=False, indent=1))
 
     def _outcome(self, status: str, message: str, **kw) -> LeadOutcome:
         self.log(f"\n■ {message}")
@@ -240,35 +318,61 @@ class Orchestrator:
             self.board.set(role, "meeting", topic)
 
     def _run(self) -> LeadOutcome:
-        plan, lead_result = self.plan()
-        if not plan:
-            return self._outcome("no_plan", f"The Lead produced no plan: {lead_result.summary}")
-        plan_text = format_plan(self.goal, plan)
-        self._save("plan.md", plan_text + "\n")
-        self.board.set("lead", "waiting", "รออนุมัติแผนงาน")
-        approved = self.approve(plan_text)
-        self.board.set("lead", "idle")
-        if not approved:
-            return self._outcome("aborted", "Plan not approved; nothing was changed.", plan=plan)
+        resume = self.resume
+        if resume is None:
+            plan, lead_result = self.plan()
+            if not plan:
+                return self._outcome("no_plan", f"The Lead produced no plan: {lead_result.summary}")
+            plan_text = format_plan(self.goal, plan)
+            self._save("plan.md", plan_text + "\n")
+            self.board.set("lead", "waiting", "รออนุมัติแผนงาน")
+            approved = self.approve(plan_text)
+            self.board.set("lead", "idle")
+            if not approved:
+                return self._outcome(
+                    "aborted", "Plan not approved; nothing was changed.", plan=plan
+                )
+            start = 1
+            done: list[tuple[PlanTask, RunResult]] = []
+        else:
+            # The plan was already approved in the earlier run: no planning, no approval.
+            plan = resume.plan
+            plan_text = format_plan(self.goal, plan)
+            self._save("plan.md", plan_text + "\n")
+            start = resume.start_task
+            done = [(PlanTask(t, "", ""), RunResult(True, s, 0)) for t, s in resume.done]
+            self.log(
+                f"▶ Resuming {resume.from_dir or 'earlier run'}: approved plan, "
+                f"continuing at task {start}/{len(plan)}"
+                + (" with the unfinished work restored" if resume.patch.strip() else "")
+            )
+        self._save_state(plan, start, done)
 
         dev_sb = self.sb["dev"]
         prepare_workspace(dev_sb, self.repo_url)
-        done: list[tuple[PlanTask, RunResult]] = []
-        for i, task in enumerate(plan, 1):
+        if resume is not None:
+            apply_patch(dev_sb, resume.patch)
+        for i in range(start, len(plan) + 1):
+            task = plan[i - 1]
             self.log(f"\n▶ Dev task {i}/{len(plan)}: {task.title}")
-            result = self.run_agent(
-                "dev", Toolbox(dev_sb), dev_task_prompt(self.goal, plan, i, done)
-            )
-            done.append((task, result))
+            prompt = dev_task_prompt(self.goal, plan, i, done)
+            if resume is not None and i == start and resume.patch.strip():
+                prompt += CONTINUE_NOTE
+            with self.board.state("dev", "working", f"งาน {i}/{len(plan)}: {task.title}"):
+                result = self.run_agent("dev", Toolbox(dev_sb), prompt)
             if not result.finished:
                 _, _, patch = collect_diff(dev_sb)
                 self._save("partial.patch", patch)
+                self._save_state(plan, i, done)
                 return self._outcome(
                     "dev_incomplete",
                     f"Dev didn't finish task {i} ({result.summary}). No PR opened; partial "
-                    f"work saved in {self.run_dir / 'partial.patch'}.",
+                    f"work saved in {self.run_dir / 'partial.patch'}. Continue with: "
+                    f"python -m agent_team lead --resume {self.run_dir}",
                     plan=plan,
                 )
+            done.append((task, result))
+            self._save_state(plan, i + 1, done)
 
         report, bugs, earlier = "", [], []
         for round_no in range(self.max_fix_rounds + 1):
