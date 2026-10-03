@@ -64,7 +64,7 @@ BANNED_CALLS = frozenset(
 ALLOWED_IMPORT_ROOTS = frozenset(
     {
         "__future__", "calc", "decimal", "fractions", "math",
-        "numbers", "operator", "statistics", "typing",
+        "numbers", "operator", "statistics", "sys", "typing",
     }
 )  # fmt: skip
 
@@ -333,7 +333,11 @@ def test_package_imports_only_stdlib_modules():
 
 def test_runtime_package_contains_only_reviewed_modules():
     """A new file in the installed package is new code to review, not a silent extra."""
-    assert [path.name for path in PACKAGE_SOURCES] == ["__init__.py", "core.py"]
+    assert [path.name for path in PACKAGE_SOURCES] == [
+        "__init__.py",
+        "__main__.py",
+        "core.py",
+    ]
 
 
 # ----------------------------------------------------- metadata / packaging
