@@ -32,7 +32,7 @@ def preflight(target: Target, branch: str, run: Runner = _run) -> list[str]:
         if found.returncode != 0:
             problems.append(
                 f"No CI: .github/workflows/ on '{branch}' doesn't call {REUSABLE_WORKFLOW}. "
-                "Add the devsecops.yml from docs/onboarding/ (see docs/AGENT-TEAM.md)."
+                "Run: bash infra/onboard-repo.sh " + target.name + " (see docs/AGENT-TEAM.md)."
             )
     if target.require_branch_protection:
         res = run(["gh", "api", f"repos/{target.name}/branches/{branch}/protection"])
