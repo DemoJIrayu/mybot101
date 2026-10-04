@@ -3,12 +3,16 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule: { interval: weekly }
+    cooldown:
+      default-days: 7
     groups:
       actions: { patterns: ["*"] }
 
   - package-ecosystem: docker
     directories: ["/infra/sandbox"]
     schedule: { interval: weekly }
+    cooldown:
+      default-days: 7
 
   # Uncomment when these folders exist (planned layout in docs/AGENT-TEAM.md):
   # - package-ecosystem: pip

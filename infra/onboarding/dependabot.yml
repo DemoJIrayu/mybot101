@@ -3,6 +3,8 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule: { interval: weekly }
+    cooldown:
+      default-days: 7
   - package-ecosystem: npm
     # Root, each top-level folder (backend/, frontend/ ...) and apps/*, packages/*.
     directories: ["/", "/*", "/apps/*", "/packages/*"]
