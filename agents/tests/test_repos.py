@@ -141,7 +141,9 @@ def test_open_pull_request_branches_from_base_and_pushes(remote, tmp_path, monke
     )
     created = {}
     monkeypatch.setattr(
-        github, "create_pr", lambda repo, base, head, title, body: created.update(locals()) or "URL"
+        github,
+        "create_pr",
+        lambda repo, base, head, title, body, draft=False: created.update(locals()) or "URL",
     )
     monkeypatch.setattr(repos, "git", lambda t, *a: git(t.local_dir, *a))  # with test identity
 

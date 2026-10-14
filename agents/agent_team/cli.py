@@ -75,7 +75,14 @@ def prepare(repo_name: str | None) -> Workspace:
 
 
 def open_pull_request(
-    target: Target, role: str, title: str, body: str, patch_file: Path, base: str, start_point: str
+    target: Target,
+    role: str,
+    title: str,
+    body: str,
+    patch_file: Path,
+    base: str,
+    start_point: str,
+    draft: bool = False,
 ) -> str:
     """Apply the patch on a new branch in your copy of the repo, push it, open the PR."""
 
@@ -98,7 +105,7 @@ def open_pull_request(
         g("apply", "--index", str(patch_file))
         g("commit", "--quiet", "-m", title)
         g("push", "--quiet", "-u", "origin", branch)
-        return github.create_pr(target.name, base, branch, title, body)
+        return github.create_pr(target.name, base, branch, title, body, draft=draft)
     finally:
         g(*back)
 
@@ -186,8 +193,10 @@ def run_lead(
         print("request at the end. You still review and merge that PR yourself.")
         return _ask("Approve this plan?")
 
-    def open_pr(title: str, body: str, patch_file: Path) -> str:
-        return open_pull_request(ws.target, "lead", title, body, patch_file, ws.branch, ws.base_sha)
+    def open_pr(title: str, body: str, patch_file: Path, draft: bool = False) -> str:
+        return open_pull_request(
+            ws.target, "lead", title, body, patch_file, ws.branch, ws.base_sha, draft=draft
+        )
 
     outcome = Orchestrator(
         goal,
