@@ -1,7 +1,8 @@
 """The checks CI runs, run by the Lead in Dev's sandbox before it opens a pull request.
 
 Mirrors the node and python jobs of .github/workflows/devsecops-reusable.yml: a clean
-install, then lint, type-check, tests and build for every project folder. Catching a
+install, a dependency audit (high/critical fail, dev tools included, like GitHub's
+dependency review), then lint, type-check, tests and build for every project folder. Catching a
 failure here costs one Dev round; catching it in CI costs a broken PR.
 """
 
@@ -26,10 +27,11 @@ for dir in $(projects -name package.json); do
   if [ "$dir" != "." ] && [ ! -f "$dir/package-lock.json" ] && [ -f ./package-lock.json ]; then
     continue
   fi
-  echo "=== $dir (Node: install, lint, typecheck, test, build)"
+  echo "=== $dir (Node: install, audit, lint, typecheck, test, build)"
   ( cd "$dir" \
     && if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; \
        else npm install --no-audit --no-fund; fi \
+    && npm audit --audit-level=high \
     && npm run lint --if-present \
     && npm run typecheck --if-present \
     && npm test --if-present \
@@ -70,6 +72,9 @@ def ci_fix_prompt(goal: str, output: str) -> str:
         "of the output:\n\n"
         f"```\n{output}\n```\n\n"
         "Fix the causes in the code or configuration. Don't skip, delete or weaken "
-        "tests or lint rules to get green. Re-run the failing command to confirm, then "
+        "tests or lint rules to get green. For `npm audit` findings, upgrade to the newest "
+        "fixed version that is at least 7 days old (`npm view <pkg> time`); for a "
+        "vulnerable package pulled in by a dependency that has no fixed release, add an "
+        "`overrides` entry in package.json. Re-run the failing command to confirm, then "
         "call finish with what you changed."
     )
