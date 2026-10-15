@@ -179,8 +179,10 @@ The approved plan is reused (no planning, no approval), Dev's unfinished work
 (`partial.patch`) is restored into a fresh workspace, and Dev is told to finish it rather
 than start over. Each run keeps `plan.md`, `state.json` and, if stopped, `partial.patch`.
 
-Stops without a PR when: the plan is rejected, a Dev task doesn't finish (partial patch
-saved), or the change touches `.github/`, `infra/` or `agents/`. Everything from a run
+Stops without a PR when: the plan is rejected, or a Dev task doesn't finish (partial
+patch saved). Changes to protected paths (`.github/`, `infra/`, `agents/`; per repo in
+`infra/repos.toml`) are dropped from the PR and listed in it; QA's edits outside tests are
+dropped too, but its tests are kept. Everything from a run
 (plan, QA reports, final patch, PR body) is saved in `runs/<time>-lead/`.
 
 ## Step 8 — the 3D office
