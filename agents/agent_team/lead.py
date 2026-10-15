@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from agent_team.agent import RunResult
+from agent_team.checks import CheckResult, ci_fix_prompt, run_ci_checks
 from agent_team.github import PullRequest
 from agent_team.qa import WRITE_RULE, build_qa_task, build_report
 from agent_team.sandbox import Sandbox
@@ -29,6 +30,7 @@ from agent_team.workspace import (
     collect_diff,
     commit_all,
     disallowed_changes,
+    left_out,
     load_tree,
 )
 
@@ -50,6 +52,7 @@ class LeadOutcome:
     open_bugs: list[Bug] = field(default_factory=list)
     pr_url: str = ""
     run_dir: Path | None = None
+    draft: bool = False  # opened as a draft: something still needs attention
 
 
 def format_plan(goal: str, plan: list[PlanTask]) -> str:
@@ -231,7 +234,7 @@ class Orchestrator:
         run_agent: RunAgent,
         summarize: Callable[[str], str],
         approve: Callable[[str], bool],
-        open_pr: Callable[[str, str, Path], str],
+        open_pr: Callable[..., str],  # (title, body, patch_file, draft=bool) -> url
         runs_dir: Path,
         max_fix_rounds: int = 2,
         log: Callable[[str], None] = print,
@@ -239,6 +242,7 @@ class Orchestrator:
         resume: ResumeState | None = None,
         protected: tuple[str, ...] = PROTECTED_PREFIXES,
         repo: str = "",
+        run_checks: Callable[[Sandbox], CheckResult] = run_ci_checks,
     ):
         self.goal = goal.strip()
         self.sb = sandboxes
@@ -250,6 +254,7 @@ class Orchestrator:
         self.summarize = summarize
         self.approve = approve
         self.open_pr = open_pr
+        self.run_checks = run_checks
         self.max_fix_rounds = max(0, max_fix_rounds)
         self.log = log
         self.board = board or NullBoard()
@@ -385,7 +390,7 @@ class Orchestrator:
             done.append((task, result))
             self._save_state(plan, i + 1, done)
 
-        report, bugs, earlier = "", [], []
+        report, bugs, earlier, qa_finished = "", [], [], False
         for round_no in range(self.max_fix_rounds + 1):
             names, stat, patch = collect_diff(dev_sb)
             if not names:
@@ -395,6 +400,9 @@ class Orchestrator:
                 stat, patch, plan_text, round_no, earlier
             )
             change = PullRequest(0, self.goal, "", "OPEN", "", "main", False, "")
+            qa_finished = qa_result.finished
+            if not qa_finished:
+                self.log(f"⚠️  QA didn't finish its review ({qa_result.summary})")
             report = build_report(change, qa_result, qa_box.bugs, qa_stat)
             self._save(f"qa-round-{round_no + 1}.md", report)
             apply_patch(dev_sb, qa_patch)  # QA's tests become part of the change
@@ -402,7 +410,8 @@ class Orchestrator:
             must_fix = blocking(bugs)
             if not must_fix:
                 minor = f" ({len(bugs)} minor issue(s) listed in the PR)" if bugs else ""
-                self.log(f"✓ QA found no blocking bugs{minor}")
+                found = "found no blocking bugs" if qa_finished else "reported no blocking bugs"
+                self.log(f"✓ QA {found}{minor}")
                 break
             if round_no == self.max_fix_rounds:
                 self.log(
@@ -418,7 +427,14 @@ class Orchestrator:
             done.append((PlanTask(f"Fix QA round {round_no + 1}", "", ""), fix))
             earlier = must_fix
 
+        check = self._ci_checks(done)
+
         names, stat, patch = collect_diff(dev_sb)
+        skipped = left_out(dev_sb)
+        if skipped:
+            self.log(
+                f"(left out {len(skipped)} generated/tool file(s), e.g. {', '.join(skipped[:3])})"
+            )
         blocked = disallowed_changes("dev", names, False, self.protected)
         patch_file = self._save("final.patch", patch)
         if blocked:
@@ -438,16 +454,62 @@ class Orchestrator:
             self.log(f"(summary failed: {exc}; using a plain description)")
             description = ""
         description = description or fallback_summary(bugs)
+        attention = []
+        if not qa_finished:
+            attention.append("QA ran out of steps before finishing its review.")
+        if blocking(bugs):
+            attention.append(f"{len(blocking(bugs))} blocking bug(s) are still open.")
+        if not check.ok:
+            attention.append(
+                "The CI checks (install, lint, type-check, tests, build) fail; output below."
+            )
+        warning = ""
+        if attention:
+            warning = (
+                "> [!WARNING]\n> **Draft: needs attention before merging**\n"
+                + "".join(f"> - {a}\n" for a in attention)
+                + "\n"
+            )
+        checks_md = ""
+        if not check.ok:
+            checks_md = (
+                "<details><summary>CI checks output (end)</summary>\n\n"
+                f"```\n{check.output}\n```\n</details>\n\n"
+            )
         body = (
-            f"{description}\n\n<details><summary>Plan approved by a human</summary>\n\n"
+            f"{warning}{description}\n\n{checks_md}"
+            "<details><summary>Plan approved by a human</summary>\n\n"
             f"```\n{plan_text}\n```\n</details>\n\n{report}\n"
             "_Generated by the Lead, Dev and QA agents. Review before merging._"
         )
         self._save("pr-body.md", body)
         title = f"agent(lead): {self.goal.splitlines()[0]}"[:72]
-        url = self.open_pr(title, body, patch_file)
-        status_note = f" with {len(blocking(bugs))} blocking bug(s) open" if blocking(bugs) else ""
+        draft = bool(attention)
+        url = self.open_pr(title, body, patch_file, draft=draft)
+        if draft:
+            message = "Draft pull request opened (" + " ".join(attention) + f"): {url}"
+        else:
+            message = f"Pull request opened: {url}"
         return self._outcome(
-            "pr_opened", f"Pull request opened{status_note}: {url}", plan=plan,
-            open_bugs=bugs, pr_url=url,
-        )  # fmt: skip
+            "pr_opened", message, plan=plan, open_bugs=bugs, pr_url=url, draft=draft
+        )
+
+    def _ci_checks(self, done: list) -> CheckResult:
+        """Run CI's checks on Dev's work; if they fail, Dev gets one round to fix them."""
+        dev_sb = self.sb["dev"]
+        self.log("\n▶ Lead runs the CI checks (install, lint, type-check, tests, build)")
+        with self.board.state("lead", "working", f"{self.tag}ตรวจแบบ CI"):
+            check = self.run_checks(dev_sb)
+        self._save("ci-checks.txt", check.output)
+        if check.ok:
+            self.log("✓ CI checks pass")
+            return check
+        self.log("⚠️  CI checks fail; Dev gets one round to fix them")
+        with self.board.state("dev", "working", f"{self.tag}แก้ให้ผ่าน CI"):
+            fix = self.run_agent("dev", Toolbox(dev_sb), ci_fix_prompt(self.goal, check.output))
+        done.append((PlanTask("Fix CI checks", "", ""), fix))
+        with self.board.state("lead", "working", f"{self.tag}ตรวจแบบ CI อีกรอบ"):
+            check = self.run_checks(dev_sb)
+        self._save("ci-checks.txt", check.output)
+        self.log("✓ CI checks pass" if check.ok else "⚠️  CI checks still fail")
+        return check

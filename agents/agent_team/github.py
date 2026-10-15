@@ -68,8 +68,8 @@ def comment_on_pr(number: int, body_file: Path, repo: str) -> None:
     _gh("pr", "comment", str(number), "--repo", repo, "--body-file", str(body_file))
 
 
-def create_pr(repo: str, base: str, head: str, title: str, body: str) -> str:
+def create_pr(repo: str, base: str, head: str, title: str, body: str, draft: bool = False) -> str:
     return _gh(
         "pr", "create", "--repo", repo, "--base", base, "--head", head,
-        "--title", title, "--body", body,
+        "--title", title, "--body", body, *(["--draft"] if draft else []),
     )  # fmt: skip

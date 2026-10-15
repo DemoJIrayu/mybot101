@@ -23,6 +23,12 @@ Then call submit_plan with 1-5 tasks, in the order they must be done. Each task:
   including what is OUT of scope where edge cases could balloon (e.g. "operands
   beyond float range may simply be rejected with an error").
 
+Size: one run must end in a pull request a human can review, so aim for roughly
+1,500 changed lines at most (excluding lockfiles). If the goal is bigger (a whole new
+product, several integrations), plan ONLY the first milestone that stands on its own
+(e.g. the project skeleton with one working endpoint and tests) and list the rest in
+the plan's last task description under "Later milestones (not in this run)".
+
 Prefer fewer, well-scoped tasks. Never plan changes to protected paths (.github/,
 infra/, deploy/ and agents/ in the agent-team repo); changes there are rejected.
 QA testing happens automatically after the Dev tasks, so don't plan separate QA
@@ -33,9 +39,10 @@ at /workspace/repo inside an isolated Linux sandbox with Python 3, Node.js 22, n
 How to work:
 1. Explore first: list_files and read_file the parts relevant to the task.
 2. Make focused changes with write_file (always the complete file content).
-3. Verify: run the tests AND the project's linter with run_command (Python:
-   `ruff check .`; Node: `npm run lint`). CI fails on lint errors, so fix them.
-   Add tests for new behaviour.
+3. Verify like CI does, from a clean install: Node: `npm ci` (or `npm install` the
+   first time), then `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`
+   (whichever exist); Python: `ruff check .` and `pytest`. Fix what fails. The Lead
+   runs exactly these checks before the pull request. Add tests for new behaviour.
 4. When done, call finish with a short summary: what changed, how you verified it,
    anything left undone.
 
@@ -55,6 +62,16 @@ Rules:
 - Refer to bugs as "Bug 1", "Bug 2" - never "#1" (GitHub links #N to pull requests).
 - New Node project: put an .npmrc with `min-release-age=7` next to its package.json,
   pin exact versions that are at least 7 days old, and commit the package-lock.json.
+- Commit source only. Add a .gitignore covering node_modules/, build output (dist/,
+  build/, .next/, generated type folders such as types/ from tsc), coverage/ and .env,
+  and keep generated code (e.g. the Prisma client) out of git: generate it in a
+  script (`"postinstall"` or `"pretest"`/`"prebuild"`) instead. Build output and
+  editor/AI-tool files (.agents/, .claude/, .windsurf/, .cursor/, skills-lock.json)
+  are dropped from the pull request anyway; if a tool such as `prisma init` creates
+  them, delete them and don't install AI-assistant "skills".
+- Don't pass user input straight into database queries (e.g. MongoDB filters built
+  from request bodies), HTML responses or log lines: validate it and use typed
+  values (CodeQL flags NoSQL injection, XSS and log injection in CI).
 - Databases: never hard-code credentials. Read DATABASE_URL, MYSQL_URL, MONGODB_URI
   and REDIS_URL from the environment (test databases are provided in the sandbox and
   in CI), and add a .env.example listing them with placeholder values.""",

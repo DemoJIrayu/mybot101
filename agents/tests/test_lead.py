@@ -1,11 +1,13 @@
 """End-to-end tests of the Lead flow with real git repos and scripted (fake) agents."""
 
 import os
+import shutil
 import subprocess
 
 import pytest
 
 from agent_team.agent import RunResult
+from agent_team.checks import CheckResult, run_ci_checks
 from agent_team.lead import Orchestrator, dev_task_prompt, fix_prompt, format_plan
 from agent_team.sandbox import Sandbox
 from agent_team.tools import Bug, Finished, PlanTask, Toolbox, ToolError, parse_plan
@@ -127,9 +129,12 @@ class Script:
 def _orchestrator(tmp_path, origin, sandboxes, script, approve=True, **kw):
     calls = {}
 
-    def open_pr(title, body, patch_file):
+    def open_pr(title, body, patch_file, draft=False):
         calls["pr"] = (title, body, patch_file.read_text())
+        calls["draft"] = draft
         return "https://github.com/o/r/pull/9"
+
+    kw.setdefault("run_checks", lambda sb: CheckResult(True, "all green"))
 
     orch = Orchestrator(
         "Greeting helpers",
@@ -418,3 +423,69 @@ def test_each_repo_uses_its_own_protected_paths(tmp_path, origin, sandboxes):
     )
     out = orch.run()
     assert out.status == "blocked" and "deploy/prod.yml" in out.message
+
+
+def test_unfinished_qa_review_opens_a_draft_pr(tmp_path, origin, sandboxes):
+    class QaRunsOut(Script):
+        def __call__(self, role, box, task):
+            if role == "qa":
+                self.prompts.append((role, task))
+                return RunResult(False, "Stopped after reaching the limit of 40 steps.", 40)
+            return super().__call__(role, box, task)
+
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, QaRunsOut())
+    out = orch.run()
+    assert out.status == "pr_opened" and out.draft and calls["draft"]
+    assert "QA ran out of steps" in calls["pr"][1] and "Draft" in out.message
+
+
+def test_failing_ci_checks_get_one_dev_fix_round(tmp_path, origin, sandboxes):
+    results = [CheckResult(False, "TS2305: no exported member 'PrismaClient'"),
+               CheckResult(True, "ok")]  # fmt: skip
+    script = Script(qa_bugs_per_round=(0,))
+    orch, calls = _orchestrator(
+        tmp_path, origin, sandboxes, script, run_checks=lambda sb: results.pop(0)
+    )
+    out = orch.run()
+    fix_prompts = [t for r, t in script.prompts if r == "dev" and "CI on your work" in t]
+    assert len(fix_prompts) == 1 and "TS2305" in fix_prompts[0]
+    assert out.status == "pr_opened" and not out.draft and not calls["draft"]
+
+
+def test_ci_checks_still_failing_opens_a_draft_with_the_output(tmp_path, origin, sandboxes):
+    orch, calls = _orchestrator(
+        tmp_path, origin, sandboxes, Script(qa_bugs_per_round=(0,)),
+        run_checks=lambda sb: CheckResult(False, "npm test: 3 failed"),
+    )  # fmt: skip
+    out = orch.run()
+    assert out.draft and calls["draft"]
+    body = calls["pr"][1]
+    assert "CI checks" in body and "npm test: 3 failed" in body
+    assert (out.run_dir / "ci-checks.txt").read_text() == "npm test: 3 failed"
+
+
+def test_build_output_and_ai_tool_files_stay_out_of_the_pr(tmp_path, origin, sandboxes):
+    junk = ("dist/app.js", "web/dist/x.js", ".agents/skills/p/SKILL.md", ".claude/skills/a.md",
+            "skills-lock.json", ".env", "app/greet.js.map")  # fmt: skip
+    script = Script(qa_bugs_per_round=(0,), dev_extra_files=junk)
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, script)
+    out = orch.run()
+    assert out.status == "pr_opened"
+    patch = calls["pr"][2]
+    assert "app/greet.py" in patch
+    for path in junk:
+        assert f"b/{path}" not in patch, path
+
+
+@pytest.mark.skipif(not shutil.which("npm"), reason="needs npm")
+def test_ci_check_script_reports_a_failing_node_project(tmp_path):
+    sb = Sandbox("sbx", runner=LocalRunner(tmp_path))
+    repo = tmp_path / "repo" / "web"
+    repo.mkdir(parents=True)
+    (repo / "package.json").write_text(
+        '{"name":"w","version":"1.0.0","scripts":{"test":"node -e \\"process.exit(3)\\""}}'
+    )
+    res = run_ci_checks(sb)
+    assert not res.ok and "FAILED: ./web" in res.output
+    (repo / "package.json").write_text('{"name":"w","version":"1.0.0","scripts":{}}')
+    assert run_ci_checks(sb).ok

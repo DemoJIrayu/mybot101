@@ -9,6 +9,18 @@ from agent_team.tools import is_test_path
 PROTECTED_PREFIXES = (".github/", "infra/", "agents/")
 _AGENT_GIT = ["git", "-c", "user.name=agent-team", "-c", "user.email=agent-team@localhost"]
 
+# Never part of a change, whatever .gitignore says: build output, installed packages,
+# caches, local env files, and files other AI tools drop into a repo (for example
+# `prisma init` adding agent "skills"). Git pathspec globs; "**/" also matches the root.
+LEFT_OUT = (
+    "**/node_modules/**", "**/dist/**", "**/build/**", "**/.next/**", "**/coverage/**",
+    "**/.turbo/**", "**/*.tsbuildinfo", "**/*.map", "**/__pycache__/**",
+    "**/.pytest_cache/**", "**/.ruff_cache/**", "**/.venv*/**",
+    "**/.env", "**/.env.local", "**/.env.*.local",
+    ".agents/**", ".claude/**", ".windsurf/**", ".cursor/**", ".codex/**", ".gemini/**",
+    ".kiro/**", "**/skills-lock.json",
+)  # fmt: skip
+
 
 def protected_changes(
     paths: list[str], protected: tuple[str, ...] = PROTECTED_PREFIXES
@@ -49,14 +61,28 @@ def load_tree(sandbox: Sandbox, tree: bytes) -> None:
 
 
 def collect_diff(sandbox: Sandbox) -> tuple[list[str], str, str]:
-    """Stage everything in the sandbox and return (changed paths, stat, full patch)."""
-    sandbox.exec(["git", "add", "-A"])
+    """Stage the agents' work and return (changed paths, stat, full patch).
+
+    Files matching LEFT_OUT are never staged; see left_out() to list them.
+    """
+    sandbox.exec(["git", "add", "-A", "--", ".", *(f":(exclude,glob){g}" for g in LEFT_OUT)])
+    # Also unstage any that an earlier `git add` picked up.
+    sandbox.exec(["git", "reset", "--quiet", "--", *(f":(glob){g}" for g in LEFT_OUT)])
     names = sandbox.exec(["git", "diff", "--cached", "--name-only"]).output.split()
     stat = sandbox.exec(["git", "diff", "--cached", "--stat"]).output
     patch = sandbox.exec(["git", "diff", "--cached", "--binary"]).output
     if patch and not patch.endswith("\n"):
         patch += "\n"
     return names, stat, patch
+
+
+def left_out(sandbox: Sandbox) -> list[str]:
+    """New or changed files that collect_diff leaves out (build output, AI-tool files...)."""
+    res = sandbox.exec(
+        ["git", "ls-files", "--others", "--modified", "--exclude-standard", "--",
+         *(f":(glob){g}" for g in LEFT_OUT)]
+    )  # fmt: skip
+    return sorted(set(res.output.split())) if res.ok else []
 
 
 def apply_patch(sandbox: Sandbox, patch: str) -> None:

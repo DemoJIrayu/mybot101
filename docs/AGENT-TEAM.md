@@ -148,8 +148,21 @@ python -m agent_team lead "..." --fix-rounds 1      # fewer QA→Dev fix loops
    `--fix-rounds`, default 2). Medium/low bugs don't loop; they're listed in the PR for
    you to judge. Weakening a safeguard (disabled limits, skipped validation or TLS checks,
    overridden private library APIs) always counts as high.
-6. The Lead writes the PR description (summary, verification, open issues, verdict) and
+6. **CI checks before the PR:** the Lead runs the same checks as the pipeline in Dev's
+   workspace (clean `npm ci`/`npm install`, lint, type-check, tests, build; Python:
+   ruff, pytest). If they fail, Dev gets one round to fix them. Output: `ci-checks.txt`.
+7. The Lead writes the PR description (summary, verification, open issues, verdict) and
    **opens one PR** with your `gh` login. You review and merge it; the pipeline checks it.
+   It opens a **draft** PR, with a warning at the top, when QA ran out of steps,
+   blocking bugs are still open, or the CI checks still fail: don't merge those as-is.
+
+Never in a PR, whatever `.gitignore` says: build output (`dist/`, `build/`, `.next/`,
+`coverage/`, `*.map`), `node_modules/`, `.env`, and files other AI tools add
+(`.agents/`, `.claude/`, `.windsurf/`, `.cursor/`, `skills-lock.json`). The Lead logs
+how many it left out.
+
+Big goals: the Lead plans only a first milestone that fits a reviewable PR (about
+1,500 changed lines) and lists the rest as later milestones; run those as new goals.
 
 Test budget: QA adds at most 15 tests in the first round and 5 per re-test round, in one
 `tests/test_<module>_qa.py` file per module (extended, never a new file per round).
