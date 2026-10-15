@@ -85,6 +85,18 @@ def left_out(sandbox: Sandbox) -> list[str]:
     return sorted(set(res.output.split())) if res.ok else []
 
 
+def revert_paths(sandbox: Sandbox, paths: list[str]) -> None:
+    """Undo the agents' changes to these paths (back to the last local commit)."""
+    if not paths:
+        return
+    sandbox.exec(["git", "reset", "--quiet", "--", *paths])
+    for path in paths:
+        if sandbox.exec(["git", "cat-file", "-e", f"HEAD:{path}"]).ok:
+            sandbox.exec(["git", "checkout", "--quiet", "HEAD", "--", path])
+        else:  # a new file
+            sandbox.exec(["rm", "-f", "--", path])
+
+
 def apply_patch(sandbox: Sandbox, patch: str) -> None:
     """Apply a patch produced by collect_diff (possibly in another sandbox)."""
     if not patch.strip():

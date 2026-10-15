@@ -192,12 +192,29 @@ def test_bugs_left_after_last_round_still_open_pr_flagged(tmp_path, origin, sand
     assert "Blocking (critical/high) bugs still open: 1" in calls["summary_prompt"]
 
 
-def test_protected_paths_block_the_pr(tmp_path, origin, sandboxes):
+def test_protected_paths_are_left_out_of_the_pr(tmp_path, origin, sandboxes):
     script = Script(qa_bugs_per_round=(0,), dev_extra_files=(".github/workflows/x.yml",))
     orch, calls = _orchestrator(tmp_path, origin, sandboxes, script)
     out = orch.run()
-    assert out.status == "blocked" and "pr" not in calls
-    assert ".github/workflows/x.yml" in out.message
+    assert out.status == "pr_opened"
+    title, body, patch = calls["pr"]
+    assert "app/greet.py" in patch and ".github/workflows/x.yml" not in patch
+    assert "Left out" in body and "`.github/workflows/x.yml`" in body
+
+
+def test_only_protected_changes_open_no_pr(tmp_path, origin, sandboxes):
+    class OnlyProtected(Script):
+        def __call__(self, role, box, task):
+            if role in ("dev", "qa"):  # Dev only touches .github/; QA adds no tests
+                self.prompts.append((role, task))
+                if role == "dev":
+                    box.sandbox.write_file("/workspace/repo/.github/x.yml", "x\n")
+                return RunResult(True, "done", 1)
+            return super().__call__(role, box, task)
+
+    orch, calls = _orchestrator(tmp_path, origin, sandboxes, OnlyProtected(qa_bugs_per_round=(0,)))
+    out = orch.run()
+    assert out.status == "blocked" and "pr" not in calls and ".github/x.yml" in out.message
 
 
 def test_qa_changes_to_app_code_are_discarded(tmp_path, origin, sandboxes):
@@ -206,7 +223,8 @@ def test_qa_changes_to_app_code_are_discarded(tmp_path, origin, sandboxes):
     out = orch.run()
     assert out.status == "pr_opened"
     patch = calls["pr"][2]
-    assert "hacked" not in patch and "test_qa_1.py" not in patch
+    # QA's app-code edit is dropped, but its tests are kept.
+    assert "hacked" not in patch and "test_qa_1.py" in patch
 
 
 def test_unfinished_dev_task_stops_without_pr(tmp_path, origin, sandboxes):
@@ -422,7 +440,8 @@ def test_each_repo_uses_its_own_protected_paths(tmp_path, origin, sandboxes):
         tmp_path, origin, sandboxes, script, protected=(".github/", "infra/", "deploy/")
     )
     out = orch.run()
-    assert out.status == "blocked" and "deploy/prod.yml" in out.message
+    assert out.status == "pr_opened" and "deploy/prod.yml" not in calls["pr"][2]
+    assert "`deploy/prod.yml`" in calls["pr"][1]
 
 
 def test_unfinished_qa_review_opens_a_draft_pr(tmp_path, origin, sandboxes):

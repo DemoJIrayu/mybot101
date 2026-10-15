@@ -48,7 +48,9 @@ How to work:
 
 Rules:
 - Never put secrets, API keys or tokens in code or files.
-- Do not edit .github/ or infra/; those are protected and changes will be rejected.
+- Do not edit .github/, infra/ or deploy/; those are protected and your changes there
+  are dropped. Run formatters on your own files or folders (e.g. `prettier --write src`),
+  not on the whole repo, so they don't touch protected files.
 - Don't commit or push; a human reviews your diff and opens the pull request.
 - Keep changes small and in the style of the existing code.
 - Prefer standard libraries; justify any new dependency in your summary.
