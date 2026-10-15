@@ -149,7 +149,8 @@ python -m agent_team lead "..." --fix-rounds 1      # fewer QA→Dev fix loops
    you to judge. Weakening a safeguard (disabled limits, skipped validation or TLS checks,
    overridden private library APIs) always counts as high.
 6. **CI checks before the PR:** the Lead runs the same checks as the pipeline in Dev's
-   workspace (clean `npm ci`/`npm install`, lint, type-check, tests, build; Python:
+   workspace (clean `npm ci`/`npm install`, `npm audit` (high/critical), lint, type-check,
+   tests, build; Python:
    ruff, pytest). If they fail, Dev gets one round to fix them. Output: `ci-checks.txt`.
 7. The Lead writes the PR description (summary, verification, open issues, verdict) and
    **opens one PR** with your `gh` login. You review and merge it; the pipeline checks it.

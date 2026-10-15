@@ -63,7 +63,10 @@ Rules:
   add machinery for far-fetched edge cases.
 - Refer to bugs as "Bug 1", "Bug 2" - never "#1" (GitHub links #N to pull requests).
 - New Node project: put an .npmrc with `min-release-age=7` next to its package.json,
-  pin exact versions that are at least 7 days old, and commit the package-lock.json.
+  pin exact versions, and commit the package-lock.json. Use the NEWEST version that is
+  at least 7 days old (check `npm view <pkg> time`), not an old one you remember:
+  old versions carry known vulnerabilities. `npm audit` must show no high or
+  critical issues (dev tools included); CI blocks the PR otherwise.
 - Commit source only. Add a .gitignore covering node_modules/, build output (dist/,
   build/, .next/, generated type folders such as types/ from tsc), coverage/ and .env,
   and keep generated code (e.g. the Prisma client) out of git: generate it in a
